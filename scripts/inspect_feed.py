@@ -11,7 +11,7 @@ NS = {
     "dc": "http://purl.org/dc/elements/1.1/",
 }
 
-# Frasi candidate: quale usa davvero Substack per troncare i post a pagamento?
+# Candidate phrases: which one does Substack actually use to truncate paid posts?
 CANDIDATES = [
     "post is for paid",
     "post is for paying",

@@ -3,10 +3,15 @@ import re
 import requests
 import xml.etree.ElementTree as ET
 from urllib.parse import urlparse
+
+from dotenv import load_dotenv
+
 from extraction import get_text_from_html, html_to_text
 
-FEEDS_LIST_PATH = "assets/feeds_list.txt"
-IMAGES_DIR = "images"
+load_dotenv()
+
+FEEDS_LIST_PATH = os.environ["FEEDS_LIST_PATH"]
+IMAGES_DIR = os.environ["IMAGES_DIR"]
 
 def read_feed_urls(path: str = FEEDS_LIST_PATH) -> list[str]:
     with open(path, "r") as f:

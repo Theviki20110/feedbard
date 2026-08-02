@@ -1,7 +1,12 @@
+import os
 import sqlite3
 from contextlib import closing
 
-DB_PATH = "post_store.sqlite3"
+from dotenv import load_dotenv
+
+load_dotenv()
+
+DB_PATH = os.environ["DB_PATH"]
 
 
 def init_db(db_path: str = DB_PATH) -> None:

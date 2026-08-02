@@ -1,9 +1,14 @@
+import os
+
+from dotenv import load_dotenv
+
 from feed_reader import read_feed_urls, get_post_entries, get_feeds
 from post_store import init_db, filter_new_posts, mark_post_seen
 from processing import process_feeds
 
+load_dotenv()
 
-ONLY_FIRST_FEED = True  # TEMP: process only 1st feed. Remove this flag + filter below to restore full run.
+ONLY_FIRST_FEED = os.environ["ONLY_FIRST_FEED"].lower() == "true"  # TEMP: process only 1st feed. Set to false to restore full run.
 
 
 def check_and_run() -> None:

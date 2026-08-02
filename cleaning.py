@@ -1,12 +1,12 @@
 """
-Passata deterministica DOM -> IR a blocchi tipizzati.  Tarato su Substack.
+Deterministic DOM -> IR pass into typed blocks. Tuned for Substack.
 
-Obiettivo: attraversare l'albero UNA volta e produrre contemporaneamente
-  (a) il flusso di blocchi ordinato, con segnaposto opachi al posto dei visivi
-  (b) il registro delle risorse, indicizzato per id stabile
+Goal: walk the tree ONCE and produce, at the same time,
+  (a) the ordered block stream, with opaque placeholders in place of visuals
+  (b) the resource registry, indexed by stable id
 
-Nessun LLM in questo stadio. La posizione di ogni risorsa nel flusso e' un
-fatto strutturale: appiattire prima di averlo registrato la distrugge.
+No LLM at this stage. The position of each resource in the stream is a
+structural fact: flattening before recording it destroys it.
 """
 
 from __future__ import annotations
@@ -21,36 +21,36 @@ from urllib.parse import unquote
 from bs4 import BeautifulSoup, NavigableString, Tag
 
 # --------------------------------------------------------------------------
-# Configurazione
+# Configuration
 # --------------------------------------------------------------------------
 
-# Delimitatori scelti perche' un LLM a valle non e' tentato di "correggerli":
-# graffe e parentesi matematiche vengono riscritte, questi no.
-VIS_OPEN, VIS_CLOSE = "\u27e6", "\u27e7"      # bracket bianche
-SYM_OPEN, SYM_CLOSE = "\u27ea", "\u27eb"      # doppie angolari, per i simboli inline
+# Delimiters chosen so a downstream LLM isn't tempted to "fix" them:
+# braces and math brackets get rewritten, these don't.
+VIS_OPEN, VIS_CLOSE = "\u27e6", "\u27e7"      # white brackets
+SYM_OPEN, SYM_CLOSE = "\u27ea", "\u27eb"      # double angle brackets, for inline symbols
 
 VIS_TOKEN = VIS_OPEN + "VIS:{vid}" + VIS_CLOSE
 VIS_RE = re.compile(re.escape(VIS_OPEN) + r"VIS:([0-9a-f]{10})" + re.escape(VIS_CLOSE))
 
 ARTICLE_SELECTORS = ("div.available-content", "div.body.markup", "article", "main")
 
-# Boilerplate: scartato a livello di BLOCCO, mai con regex sul testo.
+# Boilerplate: discarded at the BLOCK level, never via regex on the text.
 BOILERPLATE_SELECTORS = (
     ".subscription-widget-wrap",
     ".subscription-widget-wrap-editor",
     ".subscription-widget",
-    ".button-wrapper",            # <p> col bottone "Subscribe now"
-    ".digest-post-embed",         # card di cross-promozione a meta' articolo
+    ".button-wrapper",            # <p> with the "Subscribe now" button
+    ".digest-post-embed",         # cross-promo card mid-article
     ".post-ufi",
     ".comments-section",
     ".paywall",
-    ".image-link-expand",         # bottoni restack / fullscreen dentro le figure
+    ".image-link-expand",         # restack / fullscreen buttons inside figures
     ".pencraft",
     "nav", "header", "form",
 )
 
-# Sezioni di coda: dal primo heading che matcha, si smette di emettere.
-# Bibliografia e bio dell'autore sono rumore in audio.
+# Tail sections: from the first matching heading, stop emitting.
+# Bibliography and author bio are noise in audio.
 TAIL_HEADINGS = re.compile(
     r"^\s*(bibliography|references|new to the newsletter|"
     r"acknowledg|further reading|share this post|bibliografia)", re.I)
@@ -61,13 +61,13 @@ GENERIC_ANCHORS = frozenset({
     "subscribe", "subscribe now", "sign in",
 })
 
-# Didascalie prive di contenuto: "(from [1, 3, 4])", "caption...", "(from [5])"
+# Captions with no real content: "(from [1, 3, 4])", "caption...", "(from [5])"
 CAPTION_NOISE = re.compile(
     r"^\(?\s*(?:from\s*\[[\d,\s]+\]|caption\.*|source|fonte)\s*\)?[.\s]*$", re.I)
 
-# NB: un paragrafo puo' contenere entrambi i deittici ("...; see above. A
-# concrete implementation is provided below."). BACK ha la priorita' perche'
-# riguarda la risorsa che stiamo posizionando; FWD riguarda quella successiva.
+# NB: a paragraph can contain both deictics ("...; see above. A
+# concrete implementation is provided below."). BACK takes priority because
+# it concerns the resource we're positioning; FWD concerns the next one.
 DEICTIC_BACK = re.compile(
     r"\b(shown|depicted|see|seen|illustrated|as)\s+(above|earlier)\b"
     r"|\bsopra\b|\bcome\s+visto\b", re.I)
@@ -75,17 +75,17 @@ DEICTIC_FWD = re.compile(
     r"\bsee\s+below\b|\bshown\s+below\b|\bas\s+follows\b|\bbelow[;.,]"
     r"|\bsotto\b|\bqui\s+sotto\b", re.I)
 
-# L'aspetto e' un PRE-ROUTER economico, non un classificatore affidabile:
-# su questo articolo una striscia 3462x1056 (ratio 3.28) e' un grafico di curve,
-# e una 1306x690 (ratio 1.89) e' una formula. Serve solo a scegliere il prompt
-# di partenza; il tipo autorevole lo restituisce il VLM, che vede l'immagine.
-# Soglia alta di proposito: preferisco perdere qualche formula che etichettare
-# grafici come formule, perche' il prompt "parafrasa la formula" su un grafico
-# produce output inventato.
+# Aspect ratio is a cheap PRE-ROUTER, not a reliable classifier:
+# in this article a 3462x1056 strip (ratio 3.28) is a curve chart,
+# and a 1306x690 one (ratio 1.89) is a formula. It only picks the starting
+# prompt; the authoritative type comes from the VLM, which sees the image.
+# Threshold set high on purpose: better to miss a few formulas than to label
+# charts as formulas, because the "paraphrase the formula" prompt on a chart
+# produces made-up output.
 FORMULA_ASPECT_MIN = 4.0
 
-# Parole nella didascalia che spostano il pre-router verso "formula",
-# indipendentemente dall'aspetto.
+# Words in the caption that push the pre-router toward "formula",
+# regardless of aspect ratio.
 FORMULA_CAPTION = re.compile(
     r"\b(formal\s+definition|objective|loss|formulation|equation|estimation|"
     r"definizione|obiettivo|equazione)\b", re.I)
@@ -117,16 +117,16 @@ class Block:
 @dataclass
 class Visual:
     vid: str
-    src: str                      # sorgente canonica S3, usata per l'id
-    fetch_url: str                # variante a piena risoluzione, da dare al VLM
+    src: str                      # canonical S3 source, used for the id
+    fetch_url: str                # full-resolution variant, to hand to the VLM
     caption: str = ""
     alt: str = ""
     width: int | None = None
     height: int | None = None
     hint: str = "figure"          # formula | figure | banner
-    hero: bool = False            # topImage: immagine di testata
+    hero: bool = False            # topImage: header image
     bytes_: int | None = None
-    # riempiti a valle da LLM3, non qui
+    # filled in downstream by LLM3, not here
     klass: str | None = None      # decorativo | illustrativo | essenziale
     description: str | None = None
 
@@ -144,12 +144,12 @@ class Document:
 
 
 # --------------------------------------------------------------------------
-# URL e geometria
+# URL and geometry
 # --------------------------------------------------------------------------
 
 def normalize_image_url(url: str) -> str:
-    """Fallback per quando data-attrs manca. Substack incapsula l'asset
-    originale, percent-encoded, in coda al path di trasformazione del CDN."""
+    """Fallback for when data-attrs is missing. Substack encapsulates the
+    original asset, percent-encoded, at the tail of the CDN transform path."""
     i = url.find("https%3A%2F%2F")
     if i != -1:
         return unquote(url[i:])
@@ -174,9 +174,9 @@ def _classify(w: int | None, h: int | None) -> str:
 
 
 def geometry(url: str) -> tuple[int | None, int | None, str]:
-    """Le dimensioni native sono nel filename Substack. Un rapporto molto
-    largo e' una striscia di formula LaTeX, non una figura: distinguerle
-    serve a instradarle verso prompt diversi, senza scaricare un byte."""
+    """Native dimensions are in the Substack filename. A very wide ratio
+    is a LaTeX formula strip, not a figure: telling them apart routes them
+    to different prompts, without downloading a single byte."""
     m = _DIM_RE.search(url)
     if not m:
         return None, None, "figure"
@@ -196,7 +196,7 @@ def _as_int(v) -> int | None:
 
 
 # --------------------------------------------------------------------------
-# Estrattore
+# Extractor
 # --------------------------------------------------------------------------
 
 class Extractor:
@@ -211,13 +211,13 @@ class Extractor:
         self._pending_notes: list[str] = []
         self._stop = False
 
-    # -- ingresso ----------------------------------------------------------
+    # -- entry ---------------------------------------------------------------
 
     def run(self) -> Document:
         root = self._find_article()
         self._strip_boilerplate(root)
         self._collect_footnote_bodies(root)
-        self._pending_notes.clear()          # i corpi delle note non contano
+        self._pending_notes.clear()          # footnote bodies don't count
         for node in root.children:
             if isinstance(node, Tag):
                 self._dispatch(node)
@@ -241,8 +241,9 @@ class Extractor:
                 node.decompose()
 
     def _collect_footnote_bodies(self, root: Tag) -> None:
-        """L'id sta sull'<a class="footnote-number">, NON sul div contenitore.
-        Prenderlo dal div lascia le note senza chiave e le perde in silenzio."""
+        """The id is on the <a class="footnote-number">, NOT on the container
+        div. Taking it from the div leaves the notes keyless and silently
+        drops them."""
         for node in root.select("div.footnote"):
             num = node.select_one("a.footnote-number")
             fid = ""
@@ -255,7 +256,7 @@ class Extractor:
                 self.notes[fid] = self._collapse(self._inline(body))
             node.decompose()
 
-    # -- dispatch ----------------------------------------------------------
+    # -- dispatch --------------------------------------------------------------
 
     def _dispatch(self, node: Tag) -> None:
         if self._stop:
@@ -285,13 +286,13 @@ class Extractor:
         if name in ("hr", "script", "style", "svg", "button"):
             return
 
-        # Contenitore generico (Substack ne annida molti): scendo di un livello
-        # invece di appiattirlo, altrimenti perdo la tipizzazione dei figli.
+        # Generic container (Substack nests plenty of these): descend one
+        # level instead of flattening it, otherwise I lose the children's typing.
         for child in node.children:
             if isinstance(child, Tag):
                 self._dispatch(child)
 
-    # -- emettitori --------------------------------------------------------
+    # -- emitters --------------------------------------------------------------
 
     def _emit_heading(self, node: Tag, level: int) -> None:
         text = self._collapse(self._inline(node))
@@ -325,8 +326,9 @@ class Extractor:
         if img is None:
             return
 
-        # data-attrs porta la sorgente canonica S3 piu' alt, title e dimensioni
-        # native: e' la fonte di verita', il de-incapsulamento e' il fallback.
+        # data-attrs carries the canonical S3 source plus alt, title, and
+        # native dimensions: it's the source of truth, un-encapsulation is
+        # the fallback.
         attrs: dict = {}
         raw = img.get("data-attrs")
         if raw:
@@ -336,7 +338,7 @@ class Extractor:
                 attrs = {}
 
         displayed = img.get("src") or img.get("data-src") or ""
-        # L'<a> che avvolge la figura punta alla variante senza w_ limit.
+        # The <a> wrapping the figure points to the variant without a w_ limit.
         link = node.find("a", class_="image-link") if isinstance(node, Tag) else None
         fullres = (link.get("href") or "") if link is not None else ""
 
@@ -355,7 +357,7 @@ class Extractor:
         if CAPTION_NOISE.match(caption):
             caption = ""
 
-        # La didascalia, quando c'e', batte la geometria.
+        # The caption, when present, beats geometry.
         if hint != "formula" and FORMULA_CAPTION.search(caption):
             hint = "formula"
 
@@ -372,8 +374,8 @@ class Extractor:
         self.blocks.append(Block(Kind.VISUAL, vid=vid))
 
     def _emit_code_wrapper(self, node: Tag) -> None:
-        """La lingua sta in data-attrs del wrapper; la classe del <pre> e'
-        solo 'shiki'."""
+        """The language lives in the wrapper's data-attrs; the <pre>'s class
+        is just 'shiki'."""
         lang = None
         try:
             lang = json.loads(node.get("data-attrs") or "{}").get("language")
@@ -384,7 +386,7 @@ class Extractor:
             self._emit_code(pre, lang)
 
     def _emit_code(self, node: Tag, lang: str | None = None) -> None:
-        # Shiki puo' avvolgere ogni riga in <span class="line">.
+        # Shiki can wrap each line in a <span class="line">.
         line_spans = node.select("span.line")
         code = ("\n".join(s.get_text("") for s in line_spans)
                 if line_spans else node.get_text(""))
@@ -421,11 +423,12 @@ class Extractor:
             self.blocks.append(Block(Kind.LIST, text="\n".join(items),
                                      note_ids=self._drain_notes()))
 
-    # -- serializzazione inline -------------------------------------------
+    # -- inline serialization ---------------------------------------------
 
     def _inline(self, node) -> str:
-        """Ancore ridotte al solo testo utile, note raccolte e rimosse dal
-        flusso, simboli in <code> marcati per lo stadio di lessico."""
+        """Anchors reduced to just the useful text, notes collected and
+        removed from the stream, symbols in <code> marked for the lexicon
+        stage."""
         if node is None:
             return ""
         if isinstance(node, NavigableString):
@@ -439,11 +442,11 @@ class Extractor:
             href = node.get("href", "")
             if href.startswith("#footnote"):
                 self._pending_notes.append(href.split("-")[-1])
-                return ""                      # [3] a meta' frase spezza la prosodia
+                return ""                      # [3] mid-sentence breaks prosody
             label = node.get_text(" ", strip=True)
             if label.strip().lower().strip(".,:;") in GENERIC_ANCHORS:
                 return ""
-            return label                       # testo dell'ancora, URL scartato
+            return label                       # anchor text, URL discarded
 
         if name == "code":
             inner = node.get_text("", strip=True)
@@ -464,15 +467,15 @@ class Extractor:
         ids, self._pending_notes = self._pending_notes, []
         return ids
 
-    # -- riposizionamento --------------------------------------------------
+    # -- repositioning -------------------------------------------------------
 
     def _reposition_visuals(self) -> None:
-        """La posizione nel DOM non e' sempre quella giusta per l'ascolto.
+        """DOM position isn't always the right one for listening.
 
-        Se la risorsa precede il paragrafo che la commenta con "as shown
-        above", l'ascoltatore incontra la descrizione senza avere ancora il
-        contesto: la sposto dopo quel paragrafo. Se il paragrafo precedente
-        dice "see below", la posizione e' gia' corretta.
+        If the resource precedes the paragraph that comments on it with "as
+        shown above", the listener hits the description without having the
+        context yet: move it after that paragraph. If the preceding
+        paragraph says "see below", the position is already correct.
         """
         out: list[Block] = []
         i, n = 0, len(self.blocks)
@@ -492,56 +495,3 @@ class Extractor:
 
 def extract(html: str) -> Document:
     return Extractor(html).run()
-
-
-# --------------------------------------------------------------------------
-# Assemblaggio verso il TTS + controllo di integrita'
-# --------------------------------------------------------------------------
-
-class IntegrityError(RuntimeError):
-    pass
-
-
-def to_placeholder_stream(doc: Document) -> str:
-    """Flusso testuale con segnaposto. E' questo che passi allo stadio di
-    pulizia e lessico, non il testo nudo."""
-    parts: list[str] = []
-    for b in doc.blocks:
-        if b.kind is Kind.VISUAL and b.vid:
-            parts.append(VIS_TOKEN.format(vid=b.vid))
-        elif b.kind is Kind.CODE:
-            parts.append(f"[CODE:{b.lang or 'plain'}:{b.lines}]")
-        elif b.kind is Kind.TABLE:
-            parts.append(f"[TABLE:{len(b.rows)}x{len(b.rows[0]) if b.rows else 0}]")
-        elif b.text:
-            parts.append(b.text)
-    return "\n\n".join(parts)
-
-
-def check_integrity(doc: Document, text: str) -> None:
-    """Da eseguire DOPO ogni stadio che tocca il testo. Se un modello ha
-    riscritto o inghiottito un segnaposto si deve fallire in modo esplicito:
-    un audio con buchi silenziosi e' peggio di una pipeline che si ferma."""
-    expected = doc.visual_order()
-    found = VIS_RE.findall(text)
-    if found != expected:
-        missing = [v for v in expected if v not in found]
-        extra = [v for v in found if v not in expected]
-        raise IntegrityError(
-            f"segnaposto attesi {len(expected)}, trovati {len(found)}; "
-            f"mancanti={missing} spuri={extra} "
-            f"riordinati={not missing and not extra}")
-
-
-def render_for_tts(doc: Document, text: str, *, frame: str = "Nella figura: {d}") -> str:
-    """Sostituzione finale. Nessun modello coinvolto: a questo punto il merge
-    e' una str.replace, perche' la posizione non e' mai stata perduta."""
-    check_integrity(doc, text)
-
-    def sub(m: re.Match) -> str:
-        v = doc.visuals[m.group(1)]
-        if v.klass == "decorativo" or not v.description:
-            return ""
-        return frame.format(d=v.description.rstrip(". ") + ".")
-
-    return re.sub(r"\n{3,}", "\n\n", VIS_RE.sub(sub, text)).strip()
