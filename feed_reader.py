@@ -54,7 +54,7 @@ def get_feeds(entries: list[dict]) -> list[dict]:
         content, metadata = get_text_from_html(entry["url"])
         items.append({
             "url": entry["url"],
-            "title": metadata,
+            "title": metadata["title"],
             "text": content,
             "image_path": save_image(entry["image_url"]),
         })

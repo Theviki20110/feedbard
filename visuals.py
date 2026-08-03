@@ -16,7 +16,7 @@ import re
 import requests
 from jinja2 import Template
 
-from bedrock_client import generate_vision_response
+from llm_client import generate_vision_response
 from cleaning import Document, Visual
 
 VISUAL_PROMPT_PATH = __file__.rsplit("/", 1)[0] + "/assets/visual_prompt.txt"

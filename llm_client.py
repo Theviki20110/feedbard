@@ -13,16 +13,22 @@ _client = anthropic.Anthropic(timeout=180.0)
 
 
 def _extract_text(response: anthropic.types.Message) -> str:
+    if response.stop_reason == "max_tokens":
+        raise RuntimeError(
+            "Anthropic response truncated: hit max_tokens before finishing. "
+            "Raise max_tokens or split the input."
+        )
     return next(block.text for block in response.content if block.type == "text")
 
 
 def generate_response(prompt: str) -> tuple[str, float]:
     start = time.time()
-    response = _client.messages.create(
+    with _client.messages.stream(
         model=MODEL_ID,
-        max_tokens=16384,
+        max_tokens=64000,
         messages=[{"role": "user", "content": prompt}],
-    )
+    ) as stream:
+        response = stream.get_final_message()
     elapsed = time.time() - start
 
     return _extract_text(response), elapsed

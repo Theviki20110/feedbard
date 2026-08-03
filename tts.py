@@ -58,8 +58,8 @@ def text_to_speech(text: str, voice: str = "if_sara") -> bytes:
 
 def generate_audio_from_text(text: str, title: str, dest_dir: str = AUDIO_DIR) -> str:
     os.makedirs(dest_dir, exist_ok=True)
-    filename = "".join(c if c.isalnum() or c in "-_" else "_" for c in title) + ".mp3"
-    dest_path = os.path.join(dest_dir, filename)
+    safe_title = "".join(c if c.isalnum() or c in "-_" else "_" for c in title)[:150]
+    dest_path = os.path.join(dest_dir, safe_title + ".mp3")
 
     audio_bytes = text_to_speech(text)
     with open(dest_path, "wb") as f:
