@@ -1,5 +1,5 @@
 from xml.dom.minidom import Document
-from cleaning import VIS_TOKEN, Kind
+from substack_feed.ingestion.html_parser import VIS_TOKEN, Kind
 
 class IntegrityError(RuntimeError):
     pass

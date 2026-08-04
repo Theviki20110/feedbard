@@ -1,10 +1,10 @@
 import logging
 
-from aggregator import aggregate_data
-from cleaning import extract
-from translation import translate_text
-from tts import generate_audio_from_text, render_for_tts
-from visuals import describe_visuals
+from substack_feed.pipeline.text_aggregator import aggregate_data
+from substack_feed.ingestion.html_parser import extract
+from substack_feed.pipeline.translator import translate_text
+from substack_feed.pipeline.audio_renderer import generate_audio_from_blocks
+from substack_feed.pipeline.visual_describer import describe_visuals
 
 def process_item(item: dict) -> str:
     title = item["title"]
@@ -22,11 +22,8 @@ def process_item(item: dict) -> str:
     print("Translate_text")
     translated = translate_text(aggregated)
 
-    print("Render_for_tts")
-    final_text = render_for_tts(doc, translated)
-
-    print("Generate_audio_from_text")
-    dest = generate_audio_from_text(final_text, title)
+    print("Generate_audio_from_blocks")
+    dest = generate_audio_from_blocks(translated, title)
     return dest
 
 

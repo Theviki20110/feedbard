@@ -16,10 +16,11 @@ import re
 import requests
 from jinja2 import Template
 
-from llm_client import generate_vision_response
-from cleaning import Document, Visual
+from substack_feed.llm_client import generate_vision_response
+from substack_feed.ingestion.html_parser import Document, Visual
+from substack_feed.paths import ASSETS_DIR
 
-VISUAL_PROMPT_PATH = __file__.rsplit("/", 1)[0] + "/assets/visual_prompt.txt"
+VISUAL_PROMPT_PATH = ASSETS_DIR / "visual_prompt.txt"
 
 _JSON_RE = re.compile(r"\{.*\}", re.S)
 

@@ -1,11 +1,10 @@
-from pathlib import Path
-
 from jinja2 import Template
 
-from llm_client import generate_response
-from cleaning import VIS_RE
+from substack_feed.llm_client import generate_response
+from substack_feed.ingestion.html_parser import VIS_RE
+from substack_feed.paths import ASSETS_DIR
 
-TRANSLATOR_PROMPT_PATH = Path(__file__).parent / "assets" / "translator_prompt.txt"
+TRANSLATOR_PROMPT_PATH = ASSETS_DIR / "translator_prompt.txt"
 
 # Long articles cause the model to summarize/skip content instead of
 # translating it in full. Chunking bounds each request to a size the model

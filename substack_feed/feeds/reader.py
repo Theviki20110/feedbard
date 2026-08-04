@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
-from extraction import get_text_from_html, html_to_text
+from substack_feed.ingestion.substack_fetcher import get_text_from_html, html_to_text
 
 load_dotenv()
 
