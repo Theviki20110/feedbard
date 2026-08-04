@@ -112,6 +112,7 @@ class Block:
     rows: list[list[str]] = field(default_factory=list)
     note_ids: list[str] = field(default_factory=list)
     deictic: str | None = None
+    translated_text: str | None = None
 
 
 @dataclass

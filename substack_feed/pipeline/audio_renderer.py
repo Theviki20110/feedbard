@@ -1,67 +1,59 @@
 import os
-import re
-from sqlite3 import IntegrityError
-
+import jiwer
 import requests
 from dotenv import load_dotenv
-
-from substack_feed.ingestion.html_parser import VIS_RE, Document
+from substack_feed.asr_client import generate_transcription
 
 load_dotenv()
 
-KOKORO_BASE_URL = os.environ["KOKORO_BASE_URL"]
+TTS_BASE_URL = os.environ["TTS_BASE_URL"]
 AUDIO_DIR = os.environ["AUDIO_DIR"]
+WER_THRESHOLD = 0.2  # 20% WER threshold for logging warnings
 
-def check_integrity(doc: Document, text: str) -> None:
-    """Run this AFTER every stage that touches the text. If a model
-    rewrote or swallowed a placeholder, fail explicitly: audio with
-    silent gaps is worse than a pipeline that stops."""
-    expected = doc.visual_order()
-    found = VIS_RE.findall(text)
-    if found != expected:
-        missing = [v for v in expected if v not in found]
-        extra = [v for v in found if v not in expected]
-        raise IntegrityError(
-            f"expected {len(expected)} placeholders, found {len(found)}; "
-            f"missing={missing} extra={extra} "
-            f"reordered={not missing and not extra}")
-
-
-def render_for_tts(doc: Document, text: str, *, frame: str = "Nella figura: {d}") -> str:
-    """Final substitution. No model involved: at this point the merge
-    is a str.replace, because position was never lost."""
-    check_integrity(doc, text)
-
-    def sub(m: re.Match) -> str:
-        v = doc.visuals[m.group(1)]
-        if v.klass == "decorativo" or not v.description:
-            return ""
-        return frame.format(d=v.description.rstrip(". ") + ".")
-
-    return re.sub(r"\n{3,}", "\n\n", VIS_RE.sub(sub, text)).strip()
-
-
-def text_to_speech(text: str, voice: str = "if_sara") -> bytes:
+def call_tts(text: str, language: str = "it", voice_id: str = "Leonardo.wav") -> bytes:
+    body = {
+            "voice_mode": "predefined",
+            "predefined_voice_id": voice_id,
+            "output_format": "wav",
+            "split_text": True,
+            "text": text,
+            "language": language,
+        }
     response = requests.post(
-        f"{KOKORO_BASE_URL}/v1/audio/speech",
-        json={
-            "model": "kokoro",
-            "voice": voice,
-            "input": text,
-            "response_format": "mp3",
-        },
+        f"{TTS_BASE_URL}/tts",
+        json=body,
         timeout=180,
     )
     response.raise_for_status()
     return response.content
 
+def generate_speech(text: str, language: str = "it", voice_id: str = "Leonardo.wav") -> bytes:
 
-def generate_audio_from_blocks(text: str, title: str, dest_dir: str = AUDIO_DIR) -> str:
+    while True:
+        audio_bytes = call_tts(text, language, voice_id)
+        transcription = generate_transcription(audio_bytes, lang=language)
+
+        wer = jiwer.wer(text, transcription)
+
+        if wer > WER_THRESHOLD:  # If WER is greater than 20%, log a warning
+            print(f"Warning: High WER ({wer:.2%}) for text: {text[:50]}...")
+        else:
+            break
+
+    return audio_bytes
+
+def generate_audio_from_blocks(documents, title: str, dest_dir: str = AUDIO_DIR) -> str:
     os.makedirs(dest_dir, exist_ok=True)
     safe_title = "".join(c if c.isalnum() or c in "-_" else "_" for c in title)[:150]
     dest_path = os.path.join(dest_dir, safe_title + ".mp3")
+    audio_bytes = bytearray()
 
-    audio_bytes = text_to_speech(text)
+    for index, document in enumerate(documents.blocks):
+        if document.translated_text is None:
+            continue
+        audio_bytes.extend(generate_speech(document.translated_text))
+        print(f"[{title}] render_for_tts: block {index}")
+
     with open(dest_path, "wb") as f:
         f.write(audio_bytes)
     return dest_path

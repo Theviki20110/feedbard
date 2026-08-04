@@ -12,30 +12,7 @@ TRANSLATOR_PROMPT_PATH = ASSETS_DIR / "translator_prompt.txt"
 # immediately instead of discovering a silent mid-document drop at the end.
 MAX_CHUNK_CHARS = 6000
 
-
-def _split_into_chunks(text: str, max_chars: int = MAX_CHUNK_CHARS) -> list[str]:
-    """Group paragraphs (blank-line separated) into chunks up to max_chars,
-    never splitting a single paragraph."""
-    paragraphs = text.split("\n\n")
-    chunks: list[str] = []
-    current: list[str] = []
-    current_len = 0
-
-    for para in paragraphs:
-        para_len = len(para) + 2  # account for the "\n\n" join
-        if current and current_len + para_len > max_chars:
-            chunks.append("\n\n".join(current))
-            current, current_len = [], 0
-        current.append(para)
-        current_len += para_len
-
-    if current:
-        chunks.append("\n\n".join(current))
-
-    return chunks
-
-
-def _translate_chunk(chunk: str, target_language: str, index: int) -> str:
+def translate_chunk(chunk: str, target_language: str, index: int) -> str:
     expected = VIS_RE.findall(chunk)
     prompt = Template(TRANSLATOR_PROMPT_PATH.read_text()).render(
         SOURCE_TEXT=chunk, TARGET_LANGUAGE=target_language
@@ -54,9 +31,10 @@ def _translate_chunk(chunk: str, target_language: str, index: int) -> str:
     return translated_chunk
 
 
-def translate_text(text: str, target_language: str = "Italian") -> str:
-    chunks = _split_into_chunks(text)
-    translated_chunks = [
-        _translate_chunk(chunk, target_language, i) for i, chunk in enumerate(chunks)
-    ]
-    return "\n\n".join(translated_chunks)
+def translate_blocks(document, target_language: str = "Italian"):
+    for index, block in enumerate(document.blocks):
+        if block.text == "":
+            continue
+        block.translated_text = translate_chunk(block.text, target_language, index)
+        print(block.translated_text)
+    return document
