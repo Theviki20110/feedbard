@@ -143,9 +143,6 @@ Do not translate, rewrite, normalize, or “correct” the following elements un
 * HTML tags
 * XML tags
 * Markdown syntax
-* LaTeX commands
-* mathematical notation
-* equations
 * variable names
 * function names
 * class names
@@ -193,9 +190,21 @@ Never modify code merely to make it conform to the linguistic conventions of the
 
 # Mathematical content
 
-Preserve equations, symbols, variable names, operators, subscripts, superscripts, and LaTeX syntax exactly.
+The translated output will be read aloud by a text-to-speech system. Convert mathematical notation into clear, natural textual language that can be pronounced correctly in the target language. Do not leave standalone mathematical symbols, Greek glyphs, or LaTeX commands in the output when they represent spoken mathematical content.
 
-Translate only the surrounding explanatory prose.
+Spell out Greek letters and mathematical symbols using their conventional spoken names. For example:
+
+* `θ` or `\theta` becomes the target-language word for “theta”;
+* `σ` or `\sigma` becomes the target-language word for “sigma”;
+* `π` becomes the target-language word for “pi”;
+* `α`, `β`, `γ`, and `λ` become “alpha”, “beta”, “gamma”, and “lambda” in their conventional target-language forms;
+* `+`, `−`, `×`, `÷`, and `=` become the target-language equivalents of “plus”, “minus”, “times”, “divided by”, and “equals”;
+* `<`, `>`, `≤`, and `≥` become pronounceable phrases such as “less than”, “greater than”, “less than or equal to”, and “greater than or equal to”;
+* subscripts and superscripts become spoken phrases when they carry mathematical meaning, such as “theta subscript t” or “x squared”.
+
+Render complete formulas and equations as concise, unambiguous prose in their original position. Preserve every operand, variable, index, exponent, operator, grouping, and mathematical relationship; change only their representation from symbolic notation to speech-friendly text.
+
+Apply this conversion only to mathematical content. Preserve source code, inline code, command-line content, API syntax, identifiers, filenames, and literal technical strings exactly, even when they contain mathematical-looking characters. When a symbol is part of a product name or an identifier rather than a formula, do not spell it out.
 
 Do not change decimal values, percentages, experimental results, model sizes, dataset statistics, or mathematical relationships.
 
@@ -253,7 +262,7 @@ Preserve the document's logical and visual organization, including:
 * captions
 * callout text
 * code blocks
-* equations
+* mathematical passages in their original positions
 * links
 * emphasis
 * Markdown formatting
@@ -400,7 +409,7 @@ Before producing the final answer, silently verify all of the following:
 5. The text does not read like a literal translation.
 6. Acronyms and English technical terms have been handled consistently.
 7. Source markers remain unchanged and attached to the correct claims.
-8. Code, equations, links, placeholders, and identifiers remain intact.
+8. Code, links, placeholders, and identifiers remain intact, while mathematical notation has been converted faithfully into pronounceable text for TTS.
 9. Direct quotations preserve their meaning and attribution.
 10. Numerical values and experimental claims have not changed.
 11. Markdown and document structure remain valid.
