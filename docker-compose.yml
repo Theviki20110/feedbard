@@ -1,0 +1,9 @@
+services:
+  substack-feed:
+    build: .
+    env_file: .env
+    volumes:
+      - ${DATA_VOLUME}:/app/data
+      - ${AUDIO_VOLUME}:/app/audio
+      - ${IMAGES_VOLUME}:/app/images
+    restart: unless-stopped
