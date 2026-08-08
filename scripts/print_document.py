@@ -6,7 +6,7 @@ import sys
 from substack_feed.ingestion.html_parser import Document, Kind, extract
 
 
-def _truncate(text: str, width: int = 1) -> str:
+def _truncate(text: str, width: int = 80) -> str:
     text = text.replace("\n", " ")
     return text if len(text) <= width else text[: width - 1] + "…"
 

@@ -3,10 +3,11 @@ import re
 import requests
 import xml.etree.ElementTree as ET
 from urllib.parse import urlparse
-
+import feedparser
+from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
-from substack_feed.ingestion.substack_fetcher import get_text_from_html, html_to_text
+from substack_feed.ingestion.substack_fetcher import get_text_from_html
 
 load_dotenv()
 
@@ -17,18 +18,37 @@ def read_feed_urls(path: str = FEEDS_LIST_PATH) -> list[str]:
     with open(path, "r") as f:
         return [line.strip() for line in f if line.strip() and not line.startswith("#")]
 
-def get_post_entries(feed_url: str) -> list[dict]:
-    r = requests.get(feed_url, headers={"User-Agent": "substack-podcast/1.0"}, timeout=30)
+def _extract_og_image(post_url: str) -> str | None:
+    try:
+        r = requests.get(post_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
+        r.raise_for_status()
+    except requests.RequestException:
+        return None
+    soup = BeautifulSoup(r.content, "html.parser")
+    tag = soup.find("meta", property="og:image") or soup.find("meta", attrs={"name": "og:image"})
+    return tag.get("content") if tag else None
+
+def get_post_entries_v2(feed_url: str) -> list[dict]:
+    r = requests.get(feed_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
     r.raise_for_status()
-    root = ET.fromstring(r.content)
-    channel = root.find("channel")
+    feed = feedparser.parse(r.content)
     entries = []
-    for item in channel.findall("item"):
-        link = item.findtext("link")
+    for item in feed.entries:
+        link = item.get("link")
         if not link:
             continue
-        enclosure = item.find("enclosure")
-        image_url = enclosure.get("url") if enclosure is not None else None
+        image_url = None
+        for media in item.get("media_content", []):
+            if media.get("url"):
+                image_url = media["url"]
+                break
+        if not image_url and item.get("links"):
+            for l in item["links"]:
+                if l.get("rel") == "enclosure" and l.get("href"):
+                    image_url = l["href"]
+                    break
+        if not image_url:
+            image_url = _extract_og_image(link)
         entries.append({"url": link, "image_url": image_url})
     return entries
 
@@ -59,12 +79,3 @@ def get_feeds(entries: list[dict]) -> list[dict]:
             "image_path": save_image(entry["image_url"]),
         })
     return items
-
-if __name__ == "__main__":
-    all_entries = [e for url in read_feed_urls() for e in get_post_entries(url)]
-    feeds = get_feeds(all_entries)
-    for feed in feeds:
-        print(f"URL: {feed['url']}")
-        print(f"Title: {feed['title']}")
-        print(f"Text: {feed['text'][:100]}...")  # Print first 100 characters of text
-        print("-" * 40)

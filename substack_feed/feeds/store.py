@@ -24,15 +24,6 @@ def init_db(db_path: str = DB_PATH) -> None:
         conn.commit()
 
 
-def is_post_seen(feed_url: str, post_url: str, db_path: str = DB_PATH) -> bool:
-    with closing(sqlite3.connect(db_path)) as conn:
-        row = conn.execute(
-            "SELECT 1 FROM seen_posts WHERE feed_url = ? AND post_url = ?",
-            (feed_url, post_url),
-        ).fetchone()
-        return row is not None
-
-
 def mark_post_seen(feed_url: str, post_url: str, db_path: str = DB_PATH) -> None:
     with closing(sqlite3.connect(db_path)) as conn:
         conn.execute(

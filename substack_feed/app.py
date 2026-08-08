@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv
-from substack_feed.feeds.reader import read_feed_urls, get_post_entries, get_feeds
+from substack_feed.feeds.reader import read_feed_urls, get_post_entries_v2, get_feeds
 from substack_feed.feeds.store import init_db, filter_new_posts, mark_post_seen
 from substack_feed.pipeline.orchestrator import process_feeds
 
@@ -14,7 +14,7 @@ def check_and_run() -> None:
     if ONLY_FIRST_FEED:
         feed_urls = feed_urls[:1]
     for feed_url in feed_urls:
-        entries = get_post_entries(feed_url)
+        entries = get_post_entries_v2(feed_url)
         new_urls = set(filter_new_posts(feed_url, [e["url"] for e in entries]))
         new_entries = [e for e in entries if e["url"] in new_urls]
 

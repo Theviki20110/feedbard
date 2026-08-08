@@ -11,8 +11,10 @@ load_dotenv()
 MODEL_ID = os.environ["MODEL_ID"]
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").lower()
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 
 _anthropic_client: anthropic.Anthropic | None = None
+_bedrock_client: anthropic.AnthropicBedrock | None = None
 
 
 def _get_anthropic_client() -> anthropic.Anthropic:
@@ -20,6 +22,13 @@ def _get_anthropic_client() -> anthropic.Anthropic:
     if _anthropic_client is None:
         _anthropic_client = anthropic.Anthropic(timeout=180.0)
     return _anthropic_client
+
+
+def _get_bedrock_client() -> anthropic.AnthropicBedrock:
+    global _bedrock_client
+    if _bedrock_client is None:
+        _bedrock_client = anthropic.AnthropicBedrock(aws_region=AWS_REGION, timeout=180.0)
+    return _bedrock_client
 
 
 def _extract_text(response: anthropic.types.Message) -> str:
@@ -58,8 +67,9 @@ def generate_response(prompt: str) -> tuple[str, float]:
     start = time.time()
     if LLM_PROVIDER == "ollama":
         text = _generate_with_ollama(prompt)
-    elif LLM_PROVIDER == "anthropic":
-        with _get_anthropic_client().messages.stream(
+    elif LLM_PROVIDER in ("anthropic", "bedrock"):
+        client = _get_anthropic_client() if LLM_PROVIDER == "anthropic" else _get_bedrock_client()
+        with client.messages.stream(
             model=MODEL_ID,
             max_tokens=64000,
             messages=[{"role": "user", "content": prompt}],
@@ -67,7 +77,7 @@ def generate_response(prompt: str) -> tuple[str, float]:
             text = _extract_text(stream.get_final_message())
     else:
         raise ValueError(
-            f"Unsupported LLM_PROVIDER={LLM_PROVIDER!r}; use 'anthropic' or 'ollama'"
+            f"Unsupported LLM_PROVIDER={LLM_PROVIDER!r}; use 'anthropic', 'bedrock', or 'ollama'"
         )
     elapsed = time.time() - start
 
@@ -78,8 +88,9 @@ def generate_vision_response(prompt: str, image_bytes: bytes, media_type: str) -
     start = time.time()
     if LLM_PROVIDER == "ollama":
         text = _generate_with_ollama(prompt, image_bytes)
-    elif LLM_PROVIDER == "anthropic":
-        response = _get_anthropic_client().messages.create(
+    elif LLM_PROVIDER in ("anthropic", "bedrock"):
+        client = _get_anthropic_client() if LLM_PROVIDER == "anthropic" else _get_bedrock_client()
+        response = client.messages.create(
             model=MODEL_ID,
             max_tokens=1024,
             messages=[{
@@ -100,7 +111,7 @@ def generate_vision_response(prompt: str, image_bytes: bytes, media_type: str) -
         text = _extract_text(response)
     else:
         raise ValueError(
-            f"Unsupported LLM_PROVIDER={LLM_PROVIDER!r}; use 'anthropic' or 'ollama'"
+            f"Unsupported LLM_PROVIDER={LLM_PROVIDER!r}; use 'anthropic', 'bedrock', or 'ollama'"
         )
     elapsed = time.time() - start
 
