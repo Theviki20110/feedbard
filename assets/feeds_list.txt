@@ -1,4 +1,4 @@
-https://huggingface.co/blog/feed.xml
 https://cameronrwolfe.substack.com/feed
 https://deezlinks.substack.com/feed
+https://huggingface.co/blog/feed.xml
 https://magazine.sebastianraschka.com/feed

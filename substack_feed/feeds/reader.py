@@ -2,6 +2,7 @@ import os
 import re
 import requests
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
 import feedparser
 from bs4 import BeautifulSoup
@@ -68,14 +69,15 @@ def save_image(image_url: str, dest_dir: str = IMAGES_DIR) -> str | None:
         f.write(r.content)
     return dest_path
 
+def _build_feed_item(entry: dict) -> dict:
+    content, metadata = get_text_from_html(entry["url"])
+    return {
+        "url": entry["url"],
+        "title": metadata["title"],
+        "text": content,
+        "image_path": save_image(entry["image_url"]),
+    }
+
 def get_feeds(entries: list[dict]) -> list[dict]:
-    items = []
-    for entry in entries:
-        content, metadata = get_text_from_html(entry["url"])
-        items.append({
-            "url": entry["url"],
-            "title": metadata["title"],
-            "text": content,
-            "image_path": save_image(entry["image_url"]),
-        })
-    return items
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        return list(executor.map(_build_feed_item, entries))

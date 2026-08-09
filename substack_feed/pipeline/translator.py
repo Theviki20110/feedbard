@@ -1,7 +1,10 @@
+from concurrent.futures import ThreadPoolExecutor
+
 from jinja2 import Template
 
 from substack_feed.llm_client import generate_response
 from substack_feed.ingestion.html_parser import VIS_RE
+from substack_feed.logger import logger
 from substack_feed.paths import ASSETS_DIR
 
 TRANSLATOR_PROMPT_PATH = ASSETS_DIR / "translator_prompt.txt"
@@ -18,7 +21,9 @@ def translate_chunk(chunk: str, target_language: str, index: int) -> str:
         SOURCE_TEXT=chunk, TARGET_LANGUAGE=target_language
     )
     translated_chunk, elapsed_time = generate_response(prompt)
-    print(f"Translation chunk {index} to {target_language} completed in {elapsed_time:.2f} seconds")
+    logger.info(
+        "Translation chunk %d to %s completed in %.2f seconds", index, target_language, elapsed_time
+    )
 
     found = VIS_RE.findall(translated_chunk)
     if found != expected:
@@ -31,10 +36,16 @@ def translate_chunk(chunk: str, target_language: str, index: int) -> str:
     return translated_chunk
 
 
-def translate_blocks(document, target_language: str = "Italian"):
-    for index, block in enumerate(document.blocks):
-        if block.text == "":
-            continue
-        block.translated_text = translate_chunk(block.text, target_language, index)
-        print(block.translated_text)
+def _translate_block(index: int, block, target_language: str) -> None:
+    block.translated_text = translate_chunk(block.text, target_language, index)
+    logger.debug(block.translated_text)
+
+
+def translate_blocks(document, target_language: str = "Italian", max_workers: int = 8):
+    todo = [(i, b) for i, b in enumerate(document.blocks) if b.text != ""]
+    if not todo:
+        return document
+
+    with ThreadPoolExecutor(max_workers=min(max_workers, len(todo))) as pool:
+        list(pool.map(lambda item: _translate_block(item[0], item[1], target_language), todo))
     return document

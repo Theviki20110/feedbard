@@ -3,6 +3,7 @@ import jiwer
 import requests
 from dotenv import load_dotenv
 from substack_feed.asr_client import generate_transcription
+from substack_feed.logger import logger
 
 load_dotenv()
 
@@ -36,7 +37,7 @@ def generate_speech(text: str, language: str = "it", voice_id: str = "Leonardo.w
         wer = jiwer.wer(text, transcription)
 
         if wer > WER_THRESHOLD:  # If WER is greater than 20%, log a warning
-            print(f"Warning: High WER ({wer:.2%}) for text: {text[:50]}...")
+            logger.warning("High WER (%.2f%%) for text: %s...", wer * 100, text[:50])
         else:
             break
 
@@ -52,7 +53,7 @@ def generate_audio_from_blocks(documents, title: str, dest_dir: str = AUDIO_DIR)
         if document.translated_text is None:
             continue
         audio_bytes.extend(generate_speech(document.translated_text))
-        print(f"[{title}] render_for_tts: block {index}")
+        logger.info("[%s] render_for_tts: block %d", title, index)
 
     with open(dest_path, "wb") as f:
         f.write(audio_bytes)

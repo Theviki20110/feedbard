@@ -12,12 +12,14 @@ from __future__ import annotations
 import json
 import mimetypes
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 import requests
 from jinja2 import Template
 
 from substack_feed.llm_client import generate_vision_response
 from substack_feed.ingestion.html_parser import Document, Visual
+from substack_feed.logger import logger
 from substack_feed.paths import ASSETS_DIR
 
 VISUAL_PROMPT_PATH = ASSETS_DIR / "visual_prompt.txt"
@@ -47,13 +49,25 @@ def describe_visual(v: Visual) -> None:
     v.description = (parsed.get("description") or "").strip() or None
 
 
-def describe_visuals(doc: Document) -> None:
+def _describe_or_fallback(v: Visual) -> None:
+    try:
+        describe_visual(v)
+    except Exception:
+        logger.warning("describe_visual failed for %s, falling back to decorativo", v.fetch_url, exc_info=True)
+        v.klass, v.description = "decorativo", None
+
+
+def describe_visuals(doc: Document, max_workers: int = 8) -> None:
     """Mutates doc.visuals in place. Call once per document, after extract()."""
+    todo = []
     for v in doc.visuals.values():
         if v.hero:
             v.klass, v.description = "decorativo", None
-            continue
-        try:
-            describe_visual(v)
-        except Exception:
-            v.klass, v.description = "decorativo", None
+        else:
+            todo.append(v)
+
+    if not todo:
+        return
+
+    with ThreadPoolExecutor(max_workers=min(max_workers, len(todo))) as pool:
+        list(pool.map(_describe_or_fallback, todo))

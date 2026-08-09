@@ -3,6 +3,7 @@ import os
 import time
 
 import anthropic
+import boto3
 import requests
 from dotenv import load_dotenv
 
@@ -14,7 +15,7 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip(
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 
 _anthropic_client: anthropic.Anthropic | None = None
-_bedrock_client: anthropic.AnthropicBedrock | None = None
+_bedrock_client = None
 
 
 def _get_anthropic_client() -> anthropic.Anthropic:
@@ -24,10 +25,10 @@ def _get_anthropic_client() -> anthropic.Anthropic:
     return _anthropic_client
 
 
-def _get_bedrock_client() -> anthropic.AnthropicBedrock:
+def _get_bedrock_client():
     global _bedrock_client
     if _bedrock_client is None:
-        _bedrock_client = anthropic.AnthropicBedrock(aws_region=AWS_REGION, timeout=180.0)
+        _bedrock_client = boto3.client("bedrock-runtime", region_name=AWS_REGION)
     return _bedrock_client
 
 
@@ -38,6 +39,19 @@ def _extract_text(response: anthropic.types.Message) -> str:
             "Raise max_tokens or split the input."
         )
     return next(block.text for block in response.content if block.type == "text")
+
+
+def _extract_text_bedrock(response: dict) -> str:
+    if response.get("stopReason") == "max_tokens":
+        raise RuntimeError(
+            "Bedrock response truncated: hit max_tokens before finishing. "
+            "Raise max_tokens or split the input."
+        )
+    return next(
+        block["text"]
+        for block in response["output"]["message"]["content"]
+        if "text" in block
+    )
 
 
 def _generate_with_ollama(prompt: str, image_bytes: bytes | None = None) -> str:
@@ -67,14 +81,22 @@ def generate_response(prompt: str) -> tuple[str, float]:
     start = time.time()
     if LLM_PROVIDER == "ollama":
         text = _generate_with_ollama(prompt)
-    elif LLM_PROVIDER in ("anthropic", "bedrock"):
-        client = _get_anthropic_client() if LLM_PROVIDER == "anthropic" else _get_bedrock_client()
+    elif LLM_PROVIDER == "anthropic":
+        client = _get_anthropic_client()
         with client.messages.stream(
             model=MODEL_ID,
             max_tokens=64000,
             messages=[{"role": "user", "content": prompt}],
         ) as stream:
             text = _extract_text(stream.get_final_message())
+    elif LLM_PROVIDER == "bedrock":
+        client = _get_bedrock_client()
+        response = client.converse(
+            modelId=MODEL_ID,
+            messages=[{"role": "user", "content": [{"text": prompt}]}],
+            inferenceConfig={"maxTokens": 64000},
+        )
+        text = _extract_text_bedrock(response)
     else:
         raise ValueError(
             f"Unsupported LLM_PROVIDER={LLM_PROVIDER!r}; use 'anthropic', 'bedrock', or 'ollama'"
@@ -88,8 +110,8 @@ def generate_vision_response(prompt: str, image_bytes: bytes, media_type: str) -
     start = time.time()
     if LLM_PROVIDER == "ollama":
         text = _generate_with_ollama(prompt, image_bytes)
-    elif LLM_PROVIDER in ("anthropic", "bedrock"):
-        client = _get_anthropic_client() if LLM_PROVIDER == "anthropic" else _get_bedrock_client()
+    elif LLM_PROVIDER == "anthropic":
+        client = _get_anthropic_client()
         response = client.messages.create(
             model=MODEL_ID,
             max_tokens=1024,
@@ -109,6 +131,21 @@ def generate_vision_response(prompt: str, image_bytes: bytes, media_type: str) -
             }],
         )
         text = _extract_text(response)
+    elif LLM_PROVIDER == "bedrock":
+        client = _get_bedrock_client()
+        image_format = media_type.split("/")[-1]
+        response = client.converse(
+            modelId=MODEL_ID,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"image": {"format": image_format, "source": {"bytes": image_bytes}}},
+                    {"text": prompt},
+                ],
+            }],
+            inferenceConfig={"maxTokens": 1024},
+        )
+        text = _extract_text_bedrock(response)
     else:
         raise ValueError(
             f"Unsupported LLM_PROVIDER={LLM_PROVIDER!r}; use 'anthropic', 'bedrock', or 'ollama'"

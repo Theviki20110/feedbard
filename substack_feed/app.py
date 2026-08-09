@@ -2,6 +2,7 @@ import os
 from dotenv import load_dotenv
 from substack_feed.feeds.reader import read_feed_urls, get_post_entries_v2, get_feeds
 from substack_feed.feeds.store import init_db, filter_new_posts, mark_post_seen
+from substack_feed.logger import logger
 from substack_feed.pipeline.orchestrator import process_feeds
 
 load_dotenv()
@@ -19,10 +20,10 @@ def check_and_run() -> None:
         new_entries = [e for e in entries if e["url"] in new_urls]
 
         if not new_entries:
-            print(f"[{feed_url}] nessun nuovo post")
+            logger.info("[%s] nessun nuovo post", feed_url)
             continue
 
-        print(f"[{feed_url}] {len(new_entries)} nuovo/i post trovato/i, avvio pipeline")
+        logger.info("[%s] %d nuovo/i post trovato/i, avvio pipeline", feed_url, len(new_entries))
         feeds = get_feeds(new_entries)
         process_feeds(feeds)
 
