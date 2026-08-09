@@ -30,12 +30,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/63/af/0f5db57b9397a0f3b7fc204cbef143401a7cadaf982330f97f1ce3d39f34/anthropic-0.120.2-py3-none-any.whl", hash = "sha256:0f0bc2b381dc0eb41c8d886b815d79c2041cd2374f83aed36f574b6dc9c579c1", size = 1022851, upload-time = "2026-07-28T17:38:25.466Z" },
 ]
 
-[package.optional-dependencies]
-bedrock = [
-    { name = "boto3" },
-    { name = "botocore" },
-]
-
 [[package]]
 name = "anyio"
 version = "4.14.2"
@@ -756,8 +750,9 @@ name = "substack-feed"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
-    { name = "anthropic", extra = ["bedrock"] },
+    { name = "anthropic" },
     { name = "beautifulsoup4" },
+    { name = "boto3" },
     { name = "feedparser" },
     { name = "jinja2" },
     { name = "jiwer" },
@@ -769,8 +764,9 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "anthropic", extras = ["bedrock"], specifier = ">=0.69.0" },
+    { name = "anthropic", specifier = ">=0.69.0" },
     { name = "beautifulsoup4", specifier = ">=4.15.0" },
+    { name = "boto3", specifier = ">=1.40.0" },
     { name = "feedparser", specifier = ">=6.0.14" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "jiwer", specifier = ">=3.0.0" },
