@@ -1,5 +1,7 @@
 from xml.dom.minidom import Document
+
 from substack_feed.ingestion.html_parser import VIS_TOKEN, Kind
+
 
 class IntegrityError(RuntimeError):
     pass
@@ -19,6 +21,7 @@ def to_placeholder_stream(doc: Document) -> str:
         elif b.text:
             parts.append(b.text)
     return "\n\n".join(parts)
+
 
 def aggregate_data(doc: Document) -> str:
     """Placeholder stream for the doc, ready for translation."""

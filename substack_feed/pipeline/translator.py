@@ -2,8 +2,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 from jinja2 import Template
 
-from substack_feed.llm_client import generate_response
 from substack_feed.ingestion.html_parser import VIS_RE
+from substack_feed.llm_client import generate_response
 from substack_feed.logger import logger
 from substack_feed.paths import ASSETS_DIR
 
@@ -14,6 +14,7 @@ TRANSLATOR_PROMPT_PATH = ASSETS_DIR / "translator_prompt.txt"
 # reliably translates in its entirety, and lets us catch a broken chunk
 # immediately instead of discovering a silent mid-document drop at the end.
 MAX_CHUNK_CHARS = 6000
+
 
 def translate_chunk(chunk: str, target_language: str, index: int) -> str:
     expected = VIS_RE.findall(chunk)

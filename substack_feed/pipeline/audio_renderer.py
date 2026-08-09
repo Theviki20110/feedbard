@@ -1,7 +1,9 @@
 import os
+
 import jiwer
 import requests
 from dotenv import load_dotenv
+
 from substack_feed.asr_client import generate_transcription
 from substack_feed.logger import logger
 
@@ -11,15 +13,16 @@ TTS_BASE_URL = os.environ["TTS_BASE_URL"]
 AUDIO_DIR = os.environ["AUDIO_DIR"]
 WER_THRESHOLD = 0.2  # 20% WER threshold for logging warnings
 
+
 def call_tts(text: str, language: str = "it", voice_id: str = "Leonardo.wav") -> bytes:
     body = {
-            "voice_mode": "predefined",
-            "predefined_voice_id": voice_id,
-            "output_format": "wav",
-            "split_text": True,
-            "text": text,
-            "language": language,
-        }
+        "voice_mode": "predefined",
+        "predefined_voice_id": voice_id,
+        "output_format": "wav",
+        "split_text": True,
+        "text": text,
+        "language": language,
+    }
     response = requests.post(
         f"{TTS_BASE_URL}/tts",
         json=body,
@@ -27,6 +30,7 @@ def call_tts(text: str, language: str = "it", voice_id: str = "Leonardo.wav") ->
     )
     response.raise_for_status()
     return response.content
+
 
 def generate_speech(text: str, language: str = "it", voice_id: str = "Leonardo.wav") -> bytes:
 
@@ -42,6 +46,7 @@ def generate_speech(text: str, language: str = "it", voice_id: str = "Leonardo.w
             break
 
     return audio_bytes
+
 
 def generate_audio_from_blocks(documents, title: str, dest_dir: str = AUDIO_DIR) -> str:
     os.makedirs(dest_dir, exist_ok=True)

@@ -26,8 +26,8 @@ from bs4 import BeautifulSoup, NavigableString, Tag
 
 # Delimiters chosen so a downstream LLM isn't tempted to "fix" them:
 # braces and math brackets get rewritten, these don't.
-VIS_OPEN, VIS_CLOSE = "\u27e6", "\u27e7"      # white brackets
-SYM_OPEN, SYM_CLOSE = "\u27ea", "\u27eb"      # double angle brackets, for inline symbols
+VIS_OPEN, VIS_CLOSE = "\u27e6", "\u27e7"  # white brackets
+SYM_OPEN, SYM_CLOSE = "\u27ea", "\u27eb"  # double angle brackets, for inline symbols
 
 VIS_TOKEN = VIS_OPEN + "VIS:{vid}" + VIS_CLOSE
 VIS_RE = re.compile(re.escape(VIS_OPEN) + r"VIS:([0-9a-f]{10})" + re.escape(VIS_CLOSE))
@@ -39,41 +39,65 @@ BOILERPLATE_SELECTORS = (
     ".subscription-widget-wrap",
     ".subscription-widget-wrap-editor",
     ".subscription-widget",
-    ".button-wrapper",            # <p> with the "Subscribe now" button
-    ".digest-post-embed",         # cross-promo card mid-article
+    ".button-wrapper",  # <p> with the "Subscribe now" button
+    ".digest-post-embed",  # cross-promo card mid-article
     ".post-ufi",
     ".comments-section",
     ".paywall",
-    ".image-link-expand",         # restack / fullscreen buttons inside figures
+    ".image-link-expand",  # restack / fullscreen buttons inside figures
     ".pencraft",
-    "nav", "header", "form",
+    "nav",
+    "header",
+    "form",
 )
 
 # Tail sections: from the first matching heading, stop emitting.
 # Bibliography and author bio are noise in audio.
 TAIL_HEADINGS = re.compile(
     r"^\s*(bibliography|references|new to the newsletter|"
-    r"acknowledg|further reading|share this post|bibliografia)", re.I)
+    r"acknowledg|further reading|share this post|bibliografia)",
+    re.I,
+)
 
-GENERIC_ANCHORS = frozenset({
-    "link", "source", "here", "this", "qui", "fonte", "read more",
-    "read full story", "continua", "vedi", "see", "click here", "leggi",
-    "subscribe", "subscribe now", "sign in",
-})
+GENERIC_ANCHORS = frozenset(
+    {
+        "link",
+        "source",
+        "here",
+        "this",
+        "qui",
+        "fonte",
+        "read more",
+        "read full story",
+        "continua",
+        "vedi",
+        "see",
+        "click here",
+        "leggi",
+        "subscribe",
+        "subscribe now",
+        "sign in",
+    }
+)
 
 # Captions with no real content: "(from [1, 3, 4])", "caption...", "(from [5])"
 CAPTION_NOISE = re.compile(
-    r"^\(?\s*(?:from\s*\[[\d,\s]+\]|caption\.*|source|fonte)\s*\)?[.\s]*$", re.I)
+    r"^\(?\s*(?:from\s*\[[\d,\s]+\]|caption\.*|source|fonte)\s*\)?[.\s]*$", re.I
+)
 
 # NB: a paragraph can contain both deictics ("...; see above. A
 # concrete implementation is provided below."). BACK takes priority because
 # it concerns the resource we're positioning; FWD concerns the next one.
 DEICTIC_BACK = re.compile(
     r"\b(shown|depicted|see|seen|illustrated|as)\s+(above|earlier)\b"
-    r"|\bsopra\b|\bcome\s+visto\b", re.I)
+    r"|\bsopra\b|\bcome\s+visto\b",
+    re.I,
+)
 DEICTIC_FWD = re.compile(
     r"\bsee\s+below\b|\bshown\s+below\b|\bas\s+follows\b|\bbelow[;.,]"
-    r"|\bsotto\b|\bqui\s+sotto\b", re.I)
+    r"|\bsotto\b|\bqui\s+sotto\b",
+    re.I,
+)
 
 # Aspect ratio is a cheap PRE-ROUTER, not a reliable classifier:
 # in this article a 3462x1056 strip (ratio 3.28) is a curve chart,
@@ -88,7 +112,9 @@ FORMULA_ASPECT_MIN = 4.0
 # regardless of aspect ratio.
 FORMULA_CAPTION = re.compile(
     r"\b(formal\s+definition|objective|loss|formulation|equation|estimation|"
-    r"definizione|obiettivo|equazione)\b", re.I)
+    r"definizione|obiettivo|equazione)\b",
+    re.I,
+)
 
 
 class Kind(str, Enum):
@@ -118,17 +144,17 @@ class Block:
 @dataclass
 class Visual:
     vid: str
-    src: str                      # canonical S3 source, used for the id
-    fetch_url: str                # full-resolution variant, to hand to the VLM
+    src: str  # canonical S3 source, used for the id
+    fetch_url: str  # full-resolution variant, to hand to the VLM
     caption: str = ""
     alt: str = ""
     width: int | None = None
     height: int | None = None
-    hint: str = "figure"          # formula | figure | banner
-    hero: bool = False            # topImage: header image
+    hint: str = "figure"  # formula | figure | banner
+    hero: bool = False  # topImage: header image
     bytes_: int | None = None
     # filled in downstream by LLM3, not here
-    klass: str | None = None      # decorativo | illustrativo | essenziale
+    klass: str | None = None  # decorativo | illustrativo | essenziale
     description: str | None = None
 
 
@@ -147,6 +173,7 @@ class Document:
 # --------------------------------------------------------------------------
 # URL and geometry
 # --------------------------------------------------------------------------
+
 
 def normalize_image_url(url: str) -> str:
     """Fallback for when data-attrs is missing. Substack encapsulates the
@@ -200,8 +227,8 @@ def _as_int(v) -> int | None:
 # Extractor
 # --------------------------------------------------------------------------
 
-class Extractor:
 
+class Extractor:
     def __init__(self, html: str, parser: str = "lxml"):
         self.soup = BeautifulSoup(html, parser)
         self.blocks: list[Block] = []
@@ -218,13 +245,12 @@ class Extractor:
         root = self._find_article()
         self._strip_boilerplate(root)
         self._collect_footnote_bodies(root)
-        self._pending_notes.clear()          # footnote bodies don't count
+        self._pending_notes.clear()  # footnote bodies don't count
         for node in root.children:
             if isinstance(node, Tag):
                 self._dispatch(node)
         self._reposition_visuals()
-        return Document(self.blocks, self.visuals, self.notes,
-                        self.dropped, self.truncated_at)
+        return Document(self.blocks, self.visuals, self.notes, self.dropped, self.truncated_at)
 
     def _find_article(self) -> Tag:
         for sel in ARTICLE_SELECTORS:
@@ -249,8 +275,9 @@ class Extractor:
             num = node.select_one("a.footnote-number")
             fid = ""
             if num is not None:
-                fid = ((num.get("id") or "").replace("footnote-", "").strip()
-                       or num.get_text(strip=True))
+                fid = (num.get("id") or "").replace("footnote-", "").strip() or num.get_text(
+                    strip=True
+                )
                 num.extract()
             body = node.select_one(".footnote-content") or node
             if fid:
@@ -308,8 +335,9 @@ class Extractor:
     def _emit_prose(self, node: Tag) -> None:
         for img in node.find_all("img"):
             parent = img.parent
-            self._emit_visual(parent if parent is not None and parent.name == "figure" else img,
-                              img=img)
+            self._emit_visual(
+                parent if parent is not None and parent.name == "figure" else img, img=img
+            )
             img.decompose()
 
         text = self._collapse(self._inline(node))
@@ -368,7 +396,9 @@ class Extractor:
             fetch_url=fullres or displayed or canonical,
             caption=caption,
             alt=(attrs.get("alt") or attrs.get("title") or img.get("alt") or "").strip(),
-            width=w, height=h, hint=hint,
+            width=w,
+            height=h,
+            hint=hint,
             hero=bool(attrs.get("topImage")),
             bytes_=_as_int(attrs.get("bytes")),
         )
@@ -389,17 +419,21 @@ class Extractor:
     def _emit_code(self, node: Tag, lang: str | None = None) -> None:
         # Shiki can wrap each line in a <span class="line">.
         line_spans = node.select("span.line")
-        code = ("\n".join(s.get_text("") for s in line_spans)
-                if line_spans else node.get_text(""))
+        code = "\n".join(s.get_text("") for s in line_spans) if line_spans else node.get_text("")
         if lang is None:
-            blob = " ".join((node.get("class") or [])
-                            + ((node.code.get("class") or []) if node.code else []))
+            blob = " ".join(
+                (node.get("class") or []) + ((node.code.get("class") or []) if node.code else [])
+            )
             m = re.search(r"language-([a-z0-9+#]+)", blob, re.I)
             lang = m.group(1) if m else None
-        self.blocks.append(Block(
-            Kind.CODE, lang=lang, text=code,
-            lines=len([ln for ln in code.splitlines() if ln.strip()]),
-        ))
+        self.blocks.append(
+            Block(
+                Kind.CODE,
+                lang=lang,
+                text=code,
+                lines=len([ln for ln in code.splitlines() if ln.strip()]),
+            )
+        )
 
     def _emit_table(self, node: Tag) -> None:
         rows: list[list[str]] = []
@@ -413,16 +447,15 @@ class Extractor:
     def _emit_quote(self, node: Tag) -> None:
         text = self._collapse(self._inline(node))
         if text:
-            self.blocks.append(Block(Kind.QUOTE, text=text,
-                                     note_ids=self._drain_notes()))
+            self.blocks.append(Block(Kind.QUOTE, text=text, note_ids=self._drain_notes()))
 
     def _emit_list(self, node: Tag) -> None:
-        items = [self._collapse(self._inline(li))
-                 for li in node.find_all("li", recursive=False)]
+        items = [self._collapse(self._inline(li)) for li in node.find_all("li", recursive=False)]
         items = [i for i in items if i]
         if items:
-            self.blocks.append(Block(Kind.LIST, text="\n".join(items),
-                                     note_ids=self._drain_notes()))
+            self.blocks.append(
+                Block(Kind.LIST, text="\n".join(items), note_ids=self._drain_notes())
+            )
 
     # -- inline serialization ---------------------------------------------
 
@@ -443,11 +476,11 @@ class Extractor:
             href = node.get("href", "")
             if href.startswith("#footnote"):
                 self._pending_notes.append(href.split("-")[-1])
-                return ""                      # [3] mid-sentence breaks prosody
+                return ""  # [3] mid-sentence breaks prosody
             label = node.get_text(" ", strip=True)
             if label.strip().lower().strip(".,:;") in GENERIC_ANCHORS:
                 return ""
-            return label                       # anchor text, URL discarded
+            return label  # anchor text, URL discarded
 
         if name == "code":
             inner = node.get_text("", strip=True)
@@ -483,9 +516,12 @@ class Extractor:
         while i < n:
             blk = self.blocks[i]
             nxt = self.blocks[i + 1] if i + 1 < n else None
-            if (blk.kind is Kind.VISUAL and nxt is not None
-                    and nxt.kind in (Kind.PROSE, Kind.LIST)
-                    and nxt.deictic == "back"):
+            if (
+                blk.kind is Kind.VISUAL
+                and nxt is not None
+                and nxt.kind in (Kind.PROSE, Kind.LIST)
+                and nxt.deictic == "back"
+            ):
                 out.extend([nxt, blk])
                 i += 2
                 continue

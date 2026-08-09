@@ -1,13 +1,17 @@
 import os
+
 from dotenv import load_dotenv
-from substack_feed.feeds.reader import read_feed_urls, get_post_entries_v2, get_feeds
-from substack_feed.feeds.store import init_db, filter_new_posts, mark_post_seen
+
+from substack_feed.feeds.reader import get_feeds, get_post_entries_v2, read_feed_urls
+from substack_feed.feeds.store import filter_new_posts, init_db, mark_post_seen
 from substack_feed.logger import logger
 from substack_feed.pipeline.orchestrator import process_feeds
 
 load_dotenv()
 
-ONLY_FIRST_FEED = os.environ["ONLY_FIRST_FEED"].lower() == "true"  # TEMP: process only 1st feed. Set to false to restore full run.
+# TEMP: process only 1st feed. Set to false in .env to restore full run.
+ONLY_FIRST_FEED = os.environ["ONLY_FIRST_FEED"].lower() == "true"
+
 
 def check_and_run() -> None:
     init_db()

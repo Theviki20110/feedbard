@@ -17,8 +17,8 @@ from concurrent.futures import ThreadPoolExecutor
 import requests
 from jinja2 import Template
 
-from substack_feed.llm_client import generate_vision_response
 from substack_feed.ingestion.html_parser import Document, Visual
+from substack_feed.llm_client import generate_vision_response
 from substack_feed.logger import logger
 from substack_feed.paths import ASSETS_DIR
 
@@ -38,7 +38,8 @@ def _fetch_image(url: str) -> tuple[bytes, str]:
 
 def describe_visual(v: Visual) -> None:
     prompt = Template(open(VISUAL_PROMPT_PATH).read()).render(
-        HINT=v.hint, ALT=v.alt, CAPTION=v.caption)
+        HINT=v.hint, ALT=v.alt, CAPTION=v.caption
+    )
     image_bytes, media_type = _fetch_image(v.fetch_url)
     raw, _ = generate_vision_response(prompt, image_bytes, media_type)
     match = _JSON_RE.search(raw)
@@ -53,7 +54,11 @@ def _describe_or_fallback(v: Visual) -> None:
     try:
         describe_visual(v)
     except Exception:
-        logger.warning("describe_visual failed for %s, falling back to decorativo", v.fetch_url, exc_info=True)
+        logger.warning(
+            "describe_visual failed for %s, falling back to decorativo",
+            v.fetch_url,
+            exc_info=True,
+        )
         v.klass, v.description = "decorativo", None
 
 

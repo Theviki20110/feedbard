@@ -5,6 +5,7 @@ import time
 import anthropic
 import boto3
 import requests
+from botocore.config import Config
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -13,6 +14,7 @@ MODEL_ID = os.environ["MODEL_ID"]
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").lower()
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
+BEDROCK_RETRY_CONFIG = Config(retries={"max_attempts": 10, "mode": "adaptive"})
 
 _anthropic_client: anthropic.Anthropic | None = None
 _bedrock_client = None
@@ -28,7 +30,9 @@ def _get_anthropic_client() -> anthropic.Anthropic:
 def _get_bedrock_client():
     global _bedrock_client
     if _bedrock_client is None:
-        _bedrock_client = boto3.client("bedrock-runtime", region_name=AWS_REGION)
+        _bedrock_client = boto3.client(
+            "bedrock-runtime", region_name=AWS_REGION, config=BEDROCK_RETRY_CONFIG
+        )
     return _bedrock_client
 
 
@@ -48,9 +52,7 @@ def _extract_text_bedrock(response: dict) -> str:
             "Raise max_tokens or split the input."
         )
     return next(
-        block["text"]
-        for block in response["output"]["message"]["content"]
-        if "text" in block
+        block["text"] for block in response["output"]["message"]["content"] if "text" in block
     )
 
 
@@ -71,9 +73,7 @@ def _generate_with_ollama(prompt: str, image_bytes: bytes | None = None) -> str:
     response.raise_for_status()
     result = response.json()
     if result.get("done_reason") == "length":
-        raise RuntimeError(
-            "Ollama response truncated: the model reached its generation limit."
-        )
+        raise RuntimeError("Ollama response truncated: the model reached its generation limit.")
     return result["response"]
 
 
@@ -115,20 +115,22 @@ def generate_vision_response(prompt: str, image_bytes: bytes, media_type: str) -
         response = client.messages.create(
             model=MODEL_ID,
             max_tokens=1024,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": media_type,
-                            "data": base64.b64encode(image_bytes).decode("ascii"),
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": media_type,
+                                "data": base64.b64encode(image_bytes).decode("ascii"),
+                            },
                         },
-                    },
-                    {"type": "text", "text": prompt},
-                ],
-            }],
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ],
         )
         text = _extract_text(response)
     elif LLM_PROVIDER == "bedrock":
@@ -136,13 +138,15 @@ def generate_vision_response(prompt: str, image_bytes: bytes, media_type: str) -
         image_format = media_type.split("/")[-1]
         response = client.converse(
             modelId=MODEL_ID,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {"image": {"format": image_format, "source": {"bytes": image_bytes}}},
-                    {"text": prompt},
-                ],
-            }],
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"image": {"format": image_format, "source": {"bytes": image_bytes}}},
+                        {"text": prompt},
+                    ],
+                }
+            ],
             inferenceConfig={"maxTokens": 1024},
         )
         text = _extract_text_bedrock(response)
