@@ -14,7 +14,7 @@ def process_item(item: dict) -> str:
     describe_visuals(doc)
 
     logger.info("[%s] translate_text", title)
-    translated_blocks = translate_blocks(doc)
+    translated_blocks = translate_blocks(doc, title)
 
     logger.info("[%s] generate_audio_from_blocks", title)
     dest = generate_audio_from_blocks(translated_blocks, title)
