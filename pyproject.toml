@@ -10,6 +10,7 @@ dependencies = [
     "jinja2>=3.1.6",
     "jiwer>=3.0.0",
     "lxml>=6.1.1",
+    "mutagen>=1.48.1",
     "pillow>=12.3.0",
     "python-dotenv>=1.0.0",
     "requests>=2.32.0",

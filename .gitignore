@@ -1,6 +1,7 @@
 # Project-specific
 post_store.sqlite3
 data/
+library/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

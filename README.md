@@ -18,7 +18,8 @@ app.check_and_run()
   │      ├─ pipeline/visual_describer.describe_visuals()  LLM vision -> classify/describe images
   │      ├─ pipeline/translator.translate_blocks()        LLM -> translated blocks
   │      ├─ pipeline/sanitizer.sanitize_blocks()          LLM + scrub -> speakable text
-  │      └─ pipeline/audio_renderer.generate_audio_from_blocks()  TTS -> episode MP3
+  │      ├─ pipeline/audio_renderer.generate_audio_from_blocks()  TTS -> episode MP3
+  │      └─ pipeline/publisher.publish()                  -> Audiobookshelf library
   └─ feeds/store.mark_post_seen()       record processed URLs
 ```
 
@@ -53,3 +54,66 @@ reused across two articles be fetched and described once.
 builds a path by hand. `scripts/migrate_layout.py` moves a pre-refactor
 `audio/` + `images/` tree onto this one.
 
+## Publishing to Audiobookshelf
+
+Publishing copies each finished episode into `LIBRARY_DIR` (default
+`library/`), laid out the way an Audiobookshelf **book** library expects:
+
+```
+library/
+  Sebastian Raschka/
+    Understanding Reasoning LLMs/
+      Understanding Reasoning LLMs.mp3
+      cover.jpg
+```
+
+Articles are published as books rather than as podcast episodes because a
+podcast library allows exactly one cover for the entire feed, while a book
+library gives every item its own — which is the point of keeping per-article
+artwork. ABS parses the author and title straight out of the folder names, so
+those keep their spaces and capitals; only characters that would break a path
+are stripped. The MP3 is also ID3-tagged (title, artist, album, year, embedded
+cover), since the concatenated TTS output carries no tags at all.
+
+The library is a copy: `DATA_DIR` stays the pipeline's state of record, so a
+republish never depends on what the media server did to its own files.
+
+In Audiobookshelf: **Settings → Libraries → Add Library**, type **Book**,
+folder = your `LIBRARY_DIR`, then **Scan**.
+
+```
+uv run python scripts/publish.py --list          # what is rendered, and does it have a cover
+uv run python scripts/publish.py --all           # backfill everything
+uv run python scripts/refetch_covers.py          # re-download missing cover art
+```
+
+`publish.py` looks the author and date up from the feeds, since the rendered
+files carry neither; `--author` skips that lookup for posts that have fallen
+off the feed.
+
+## Setup
+
+```
+uv sync
+cp .env.example .env   # fill in the values
+```
+
+Required env vars are documented in `.env.example`.
+
+## Running
+
+```
+uv run python cron_job.py     # single run (reads assets/feeds_list.txt)
+```
+
+`entrypoint.sh` runs the same thing in a loop, on `CRON_INTERVAL_SECONDS`
+(used by the Docker image, see `Dockerfile` / `docker-compose.yml`).
+
+## Development
+
+```
+uv sync --group dev
+uv run ruff check .      # lint
+uv run ruff format .     # format
+uv run pytest            # tests
+```

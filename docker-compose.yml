@@ -4,4 +4,6 @@ services:
     env_file: .env
     volumes:
       - ${DATA_VOLUME}:/app/data
+      # Point the Audiobookshelf container at this same path, as a Book library.
+      - ${LIBRARY_VOLUME}:/app/library
     restart: unless-stopped

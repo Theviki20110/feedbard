@@ -23,6 +23,18 @@ Episodes, covers, and text/speech/audio shards are all keyed on the same
 stages without a lookup table. Figures and visual shards are keyed on the
 image content hash instead, which is what lets the same figure reused across
 two articles be described once.
+
+Publishing then assembles LIBRARY_DIR, a separate tree in the layout
+Audiobookshelf expects:
+
+    library/
+      Sebastian Raschka/
+        Understanding Reasoning LLMs/
+          Understanding Reasoning LLMs.mp3
+          cover.jpg
+
+That tree is a copy, not a move: DATA_DIR stays the pipeline's own state, so
+a republish never depends on what the media server has done to its library.
 """
 
 import os
@@ -36,6 +48,10 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 ASSETS_DIR = ROOT_DIR / "assets"
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "data"))
+
+# Audiobookshelf library root. Publishing writes an {Author}/{Title}/ tree
+# here; everything under DATA_DIR stays private to the pipeline.
+LIBRARY_DIR = Path(os.getenv("LIBRARY_DIR", "library"))
 
 # --- deliverable: what the podcast container consumes ----------------------
 EPISODES_DIR = DATA_DIR / "episodes"
@@ -114,3 +130,28 @@ def audio_shard_path(title: str, index: int) -> Path:
 
 def visual_shard_path(vid: str) -> Path:
     return VISUAL_SHARDS_DIR / f"{vid}.json"
+
+
+# Audiobookshelf parses author and title out of the folder names themselves,
+# so these keep spaces and case: they are display strings, not slugs. Only
+# the characters that break a path (or that ABS reads as structure) go.
+_PATH_HOSTILE = set('/\\:*?"<>|')
+
+
+def library_name(text: str) -> str:
+    cleaned = "".join(" " if c in _PATH_HOSTILE else c for c in text)
+    # A trailing dot or space makes a directory unusable on Windows/SMB, which
+    # is where a media library tends to live.
+    return " ".join(cleaned.split()).strip(". ")[:120] or "Unknown"
+
+
+def item_dir(author: str, title: str) -> Path:
+    return LIBRARY_DIR / library_name(author) / library_name(title)
+
+
+def published_episode_path(author: str, title: str) -> Path:
+    return item_dir(author, title) / f"{library_name(title)}.mp3"
+
+
+def published_cover_path(author: str, title: str, ext: str = ".jpg") -> Path:
+    return item_dir(author, title) / f"cover{ext}"

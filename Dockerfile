@@ -16,14 +16,17 @@ RUN uv sync --frozen --no-install-project
 COPY . .
 RUN uv sync --frozen
 
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data /app/library
 
-# One volume holds everything that must survive a restart: the seen-posts DB
-# plus the artefact tree paths.py lays out underneath DATA_DIR.
+# Two volumes: /app/data is the pipeline's private state, /app/library is the
+# published tree the media server reads. Keeping them apart means the media
+# server never sees scratch files, and its library can be mounted read-only
+# elsewhere without exposing the rest.
 ENV DB_PATH=/app/data/post_store.sqlite3 \
     DATA_DIR=/app/data \
+    LIBRARY_DIR=/app/library \
     CRON_INTERVAL_SECONDS=10800
 
-VOLUME ["/app/data"]
+VOLUME ["/app/data", "/app/library"]
 
 ENTRYPOINT ["/app/entrypoint.sh"]
