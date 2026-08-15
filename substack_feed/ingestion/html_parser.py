@@ -139,6 +139,9 @@ class Block:
     note_ids: list[str] = field(default_factory=list)
     deictic: str | None = None
     translated_text: str | None = None
+    # Speech-ready form of translated_text: symbols spelled out, markup gone.
+    # Kept separate so a sanitizer re-run never costs a re-translation.
+    speech_text: str | None = None
 
 
 @dataclass

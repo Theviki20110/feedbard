@@ -6,6 +6,7 @@ from substack_feed.ingestion.html_parser import VIS_RE
 from substack_feed.llm_client import generate_response
 from substack_feed.logger import logger
 from substack_feed.paths import ASSETS_DIR, TEXT_SHARDS_DIR, text_shard_path
+from substack_feed.pipeline.sanitizer import check_usable, is_effectively_empty
 
 TRANSLATOR_PROMPT_PATH = ASSETS_DIR / "translator_prompt.txt"
 
@@ -33,6 +34,12 @@ def save_text_shard(title: str, index: int, translated_text: str) -> None:
 
 
 def translate_chunk(chunk: str, target_language: str, index: int) -> str:
+    # A block that is empty once zero-width characters are discounted gets a
+    # helpful English "the source content appears to be empty" reply from the
+    # model, which then reaches the speech engine as if it were article prose.
+    if is_effectively_empty(chunk):
+        return ""
+
     expected = VIS_RE.findall(chunk)
     prompt = Template(TRANSLATOR_PROMPT_PATH.read_text()).render(
         SOURCE_TEXT=chunk, TARGET_LANGUAGE=target_language
@@ -41,6 +48,10 @@ def translate_chunk(chunk: str, target_language: str, index: int) -> str:
     logger.info(
         "Translation chunk %d to %s completed in %.2f seconds", index, target_language, elapsed_time
     )
+
+    # Commentary about the task reads exactly like article prose downstream,
+    # so it has to be rejected here rather than discovered in the audio.
+    check_usable(translated_chunk, "translate", index)
 
     found = VIS_RE.findall(translated_chunk)
     if found != expected:
@@ -51,10 +62,10 @@ def translate_chunk(chunk: str, target_language: str, index: int) -> str:
             f"missing={missing} extra={extra}"
         )
 
-    # The model sometimes spontaneously wraps literal/technical terms in
-    # these mathematical double-angle-bracket glyphs (not part of any prompt
-    # instruction). Left in place they get narrated verbatim by the TTS engine.
-    return translated_chunk.replace("⟪", "").replace("⟫", "")
+    # The ⟪⟫ markers around inline code (added by the HTML parser) are left in
+    # place on purpose: they tell the sanitizer stage which spans are
+    # identifiers and commands rather than prose. That stage consumes them.
+    return translated_chunk
 
 
 def _translate_block(index: int, block, target_language: str, title: str) -> None:

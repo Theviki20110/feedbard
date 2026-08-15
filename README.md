@@ -17,6 +17,7 @@ app.check_and_run()
   │      ├─ ingestion/html_parser.extract()          HTML -> typed blocks + visuals
   │      ├─ pipeline/visual_describer.describe_visuals()  LLM vision -> classify/describe images
   │      ├─ pipeline/translator.translate_blocks()        LLM -> translated blocks
+  │      ├─ pipeline/sanitizer.sanitize_blocks()          LLM + scrub -> speakable text
   │      └─ pipeline/audio_renderer.generate_audio_from_blocks()  TTS -> episode MP3
   └─ feeds/store.mark_post_seen()       record processed URLs
 ```

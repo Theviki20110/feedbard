@@ -188,9 +188,14 @@ def generate_audio_from_blocks(documents, title: str) -> str:
     audio_bytes = bytearray()
 
     for index, document in enumerate(documents.blocks):
-        if document.translated_text is None:
+        # speech_text is what the sanitizer produced; translated_text is the
+        # fallback for a document that skipped that stage. An empty
+        # speech_text means the block was invisible-only and has nothing to say.
+        text = (
+            document.speech_text if document.speech_text is not None else document.translated_text
+        )
+        if not text:
             continue
-        text = document.translated_text
         audio_bytes.extend(generate_speech(text, title, index))
         logger.info("[%s] render_for_tts: block %d", title, index)
 
