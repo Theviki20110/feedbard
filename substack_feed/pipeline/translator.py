@@ -6,6 +6,7 @@ from substack_feed.ingestion.html_parser import VIS_RE
 from substack_feed.llm_client import generate_response
 from substack_feed.logger import logger
 from substack_feed.paths import ASSETS_DIR, TEXT_SHARDS_DIR, text_shard_path
+from substack_feed.pipeline.lexicon import TARGET_LANGUAGE
 from substack_feed.pipeline.sanitizer import check_usable, is_effectively_empty
 
 TRANSLATOR_PROMPT_PATH = ASSETS_DIR / "translator_prompt.txt"
@@ -74,7 +75,9 @@ def _translate_block(index: int, block, target_language: str, title: str) -> Non
     logger.debug(block.translated_text)
 
 
-def translate_blocks(document, title: str, target_language: str = "Italian", max_workers: int = 8):
+def translate_blocks(
+    document, title: str, target_language: str = TARGET_LANGUAGE, max_workers: int = 8
+):
     candidates = [(i, b) for i, b in enumerate(document.blocks) if b.text != ""]
 
     loaded = 0

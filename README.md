@@ -100,6 +100,45 @@ cp .env.example .env   # fill in the values
 
 Required env vars are documented in `.env.example`.
 
+## Narration language
+
+`TARGET_LANGUAGE` (default `Italian`) sets the language articles are
+translated into and narrated in. It reaches the LLM prompts directly, and the
+deterministic scrub in `pipeline/sanitizer.py` reads its spoken forms for
+symbols (`σ` -> "sigma", `<=` -> "minore o uguale a") from
+`assets/lexicons/<language>.json`.
+
+Supporting a new language means adding one JSON file there -- `symbols` for
+single glyphs, `sequences` for ordered multi-character replacements, longest
+first -- and pointing `TARGET_LANGUAGE` and the TTS voice at it. A language
+with no lexicon file still runs: the scrub logs a warning and falls back to
+the English spoken forms, so a symbol is narrated in the wrong language rather
+than silently dropped from a claim.
+
+## Links
+
+A read-aloud URL is a minute of spelled-out path segments a listener cannot
+use, so no link reaches the speech engine. Removal happens in three steps,
+each covering the one before it:
+
+1. **Before the LLM pass**, every URL is replaced by a `⟪link: host⟫` marker.
+   The model never sees an address, so it cannot leave one in, and the host
+   tells it what was being pointed at -- "available on GitHub" instead of a
+   sentence that trails off.
+2. **The LLM pass** consumes the marker as part of its normal rewrite,
+   phrasing the sentence around the named source. No extra call, no extra cost.
+3. **The scrub** deletes any marker or raw URL that survived and turns the
+   connector it stranded into a full stop.
+
+Step 3 is deterministic, so it cannot mend prose: `"cloned the scripts from,
+we can run"` is grammatical nonsense in any language a regex could patch. When
+a block reaches it having skipped or failed the LLM pass *and* it contained a
+link, one small repair call fixes the connective tissue
+(`assets/repair_prompt.txt`). That call is accepted only if the result keeps
+every `⟦VIS:⟧` placeholder, introduces no link, is not a refusal, and stays
+within 15% of the original length -- otherwise the unrepaired text is kept.
+The repair pass can improve a block, never replace it.
+
 ## Running
 
 ```
