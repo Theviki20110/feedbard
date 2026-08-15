@@ -34,6 +34,8 @@ artefacts are worth keeping:
 
 ```
 data/
+  post_store.sqlite3  posts already processed, per feed (the only
+                      state here that cannot be rebuilt)
   episodes/     finished MP3, one per article    ─┐ the deliverable:
   covers/       episode artwork, one per article ─┘ point Audiobookshelf here
   figures/      article images, fetched for description (input cache)

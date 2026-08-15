@@ -22,10 +22,14 @@ RUN mkdir -p /app/data /app/library
 # published tree the media server reads. Keeping them apart means the media
 # server never sees scratch files, and its library can be mounted read-only
 # elsewhere without exposing the rest.
-ENV DB_PATH=/app/data/post_store.sqlite3 \
-    DATA_DIR=/app/data \
+#
+# Set after the build steps on purpose: dependency bytecode still gets
+# compiled into the image, while at runtime the container writes nothing
+# outside the two volumes.
+ENV DATA_DIR=/app/data \
     LIBRARY_DIR=/app/library \
-    CRON_INTERVAL_SECONDS=10800
+    CRON_INTERVAL_SECONDS=10800 \
+    PYTHONDONTWRITEBYTECODE=1
 
 VOLUME ["/app/data", "/app/library"]
 

@@ -6,5 +6,6 @@ __pycache__
 audio/
 images/
 tmp/
-post_store.sqlite3
+data/
+library/
 scripts/

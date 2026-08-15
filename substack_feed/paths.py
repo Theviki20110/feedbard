@@ -3,6 +3,7 @@
 Layout, rooted at DATA_DIR:
 
     data/
+      post_store.sqlite3   posts already processed, per feed
       episodes/            finished MP3, one per article
       covers/              episode artwork, one per article
       figures/             article images, fetched for description
@@ -16,7 +17,10 @@ The split follows the lifetime of the artefacts, not the stage that writes
 them. `episodes/` and `covers/` are the finished goods. `shards/` is
 resumable scratch -- deleting any of it costs money to rebuild but loses
 nothing. `figures/` sits between the two: an input cache, safe to delete,
-expensive to refetch.
+expensive to refetch. `post_store.sqlite3` is the only thing here that
+cannot be rebuilt from the feeds: lose it and every past post looks new
+again, so it lives beside the artefacts it gates rather than in the repo
+root, and one volume mount carries all of the pipeline's state.
 
 Episodes, covers, and text/speech/audio shards are all keyed on the same
 `slug()` of the article title, so an episode's artefacts can be found across
@@ -52,6 +56,9 @@ DATA_DIR = Path(os.getenv("DATA_DIR", "data"))
 # Audiobookshelf library root. Publishing writes an {Author}/{Title}/ tree
 # here; everything under DATA_DIR stays private to the pipeline.
 LIBRARY_DIR = Path(os.getenv("LIBRARY_DIR", "library"))
+
+# --- state: the one file that cannot be rebuilt from the feeds -------------
+DB_PATH = DATA_DIR / "post_store.sqlite3"
 
 # --- deliverable: what the podcast container consumes ----------------------
 EPISODES_DIR = DATA_DIR / "episodes"

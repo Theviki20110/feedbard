@@ -24,6 +24,12 @@ def test_slug_is_bounded():
     assert len(paths.slug("x" * 500)) == 150
 
 
+def test_db_lives_under_the_data_root():
+    # The dedup DB is the one unrebuildable piece of state, so it has to sit
+    # inside the tree that gets mounted as a volume -- not next to the code.
+    assert paths.DB_PATH.parent == paths.DATA_DIR
+
+
 def test_deliverables_are_not_mixed_with_scratch():
     # An Audiobookshelf library points at episodes/ and covers/; a shard
     # landing in either would show up as a broken episode.

@@ -1,15 +1,15 @@
-import os
 import sqlite3
 from contextlib import closing
+from pathlib import Path
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
-DB_PATH = os.environ["DB_PATH"]
+from substack_feed.paths import DB_PATH
 
 
-def init_db(db_path: str = DB_PATH) -> None:
+def init_db(db_path: str | Path = DB_PATH) -> None:
+    # The DB sits inside DATA_DIR, which on a fresh volume may not exist yet;
+    # sqlite3 will not create the parent for us, and init_db runs before any
+    # other stage has had a chance to.
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     with closing(sqlite3.connect(db_path)) as conn:
         conn.execute(
             """
@@ -24,7 +24,7 @@ def init_db(db_path: str = DB_PATH) -> None:
         conn.commit()
 
 
-def mark_post_seen(feed_url: str, post_url: str, db_path: str = DB_PATH) -> None:
+def mark_post_seen(feed_url: str, post_url: str, db_path: str | Path = DB_PATH) -> None:
     with closing(sqlite3.connect(db_path)) as conn:
         conn.execute(
             "INSERT OR IGNORE INTO seen_posts (feed_url, post_url) VALUES (?, ?)",
@@ -33,7 +33,9 @@ def mark_post_seen(feed_url: str, post_url: str, db_path: str = DB_PATH) -> None
         conn.commit()
 
 
-def filter_new_posts(feed_url: str, post_urls: list[str], db_path: str = DB_PATH) -> list[str]:
+def filter_new_posts(
+    feed_url: str, post_urls: list[str], db_path: str | Path = DB_PATH
+) -> list[str]:
     with closing(sqlite3.connect(db_path)) as conn:
         seen = {
             row[0]
