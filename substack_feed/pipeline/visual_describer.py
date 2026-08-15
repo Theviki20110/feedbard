@@ -12,7 +12,6 @@ from __future__ import annotations
 import io
 import json
 import mimetypes
-import os
 import re
 from concurrent.futures import ThreadPoolExecutor
 
@@ -23,36 +22,38 @@ from PIL import Image
 from substack_feed.ingestion.html_parser import Document, Visual
 from substack_feed.llm_client import generate_vision_response
 from substack_feed.logger import logger
-from substack_feed.paths import ASSETS_DIR
+from substack_feed.paths import (
+    ASSETS_DIR,
+    FIGURES_DIR,
+    VISUAL_SHARDS_DIR,
+    figure_path,
+    find_figure,
+    visual_shard_path,
+)
 
 VISUAL_PROMPT_PATH = ASSETS_DIR / "visual_prompt.txt"
 
 _JSON_RE = re.compile(r"\{.*\}", re.S)
 
 # vid is a content hash of the image's canonical source, stable across runs
-# and articles, so the shard is keyed on it directly rather than on title:
-# interrupting mid-article and restarting skips every already-described
-# visual instead of re-billing the vision model for it.
-AUDIO_DIR = os.environ["AUDIO_DIR"]
-VISUAL_SHARDS_DIR = os.path.join(AUDIO_DIR, "visual_shards")
-
-
-def _shard_path(vid: str) -> str:
-    return os.path.join(VISUAL_SHARDS_DIR, f"{vid}.json")
+# and articles, so both the figure and its shard are keyed on it rather than
+# on title: interrupting mid-article and restarting skips every
+# already-described visual instead of re-billing the vision model for it, and
+# a figure reused across two articles is fetched once.
 
 
 def load_visual_shard(vid: str) -> dict | None:
-    path = _shard_path(vid)
-    if not os.path.exists(path):
+    path = visual_shard_path(vid)
+    if not path.exists():
         return None
-    with open(path, encoding="utf-8") as f:
-        return json.load(f)
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def save_visual_shard(vid: str, klass: str, description: str | None) -> None:
-    os.makedirs(VISUAL_SHARDS_DIR, exist_ok=True)
-    with open(_shard_path(vid), "w", encoding="utf-8") as f:
-        json.dump({"klass": klass, "description": description}, f)
+    VISUAL_SHARDS_DIR.mkdir(parents=True, exist_ok=True)
+    visual_shard_path(vid).write_text(
+        json.dumps({"klass": klass, "description": description}), encoding="utf-8"
+    )
 
 
 # Bedrock rejects images with either dimension over 8000px. Substack strips
@@ -75,20 +76,36 @@ def _downscale_if_needed(image_bytes: bytes, media_type: str) -> tuple[bytes, st
         return buf.getvalue(), "image/jpeg"
 
 
-def _fetch_image(url: str) -> tuple[bytes, str]:
+def _fetch_image(vid: str, url: str) -> tuple[bytes, str]:
+    """Fetch through the figures cache.
+
+    What lands on disk is the downscaled image actually sent to the vision
+    model, not the original: it is the version worth keeping, and re-deriving
+    it costs another download plus a resize.
+    """
+    cached = find_figure(vid)
+    if cached is not None:
+        media_type = mimetypes.guess_type(cached.name)[0] or "image/jpeg"
+        return cached.read_bytes(), media_type
+
     resp = requests.get(url, timeout=30)
     resp.raise_for_status()
     media_type = resp.headers.get("Content-Type", "").split(";")[0].strip()
     if not media_type.startswith("image/"):
         media_type = mimetypes.guess_type(url)[0] or "image/jpeg"
-    return _downscale_if_needed(resp.content, media_type)
+    image_bytes, media_type = _downscale_if_needed(resp.content, media_type)
+
+    FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+    ext = mimetypes.guess_extension(media_type) or ".jpg"
+    figure_path(vid, ext).write_bytes(image_bytes)
+    return image_bytes, media_type
 
 
 def describe_visual(v: Visual) -> None:
     prompt = Template(open(VISUAL_PROMPT_PATH).read()).render(
         HINT=v.hint, ALT=v.alt, CAPTION=v.caption
     )
-    image_bytes, media_type = _fetch_image(v.fetch_url)
+    image_bytes, media_type = _fetch_image(v.vid, v.fetch_url)
     raw, _ = generate_vision_response(prompt, image_bytes, media_type)
     match = _JSON_RE.search(raw)
     parsed = json.loads(match.group(0) if match else raw)

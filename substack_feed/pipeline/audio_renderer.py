@@ -1,5 +1,6 @@
 import difflib
 import os
+import re
 
 import boto3
 import jiwer
@@ -8,20 +9,23 @@ from dotenv import load_dotenv
 
 from substack_feed.asr_client import generate_transcription
 from substack_feed.logger import logger
-from substack_feed.paths import safe_filename
+from substack_feed.paths import (
+    AUDIO_SHARDS_DIR,
+    EPISODES_DIR,
+    audio_shard_path,
+    episode_path,
+)
 
 load_dotenv()
 
 TTS_PROVIDER = os.getenv("TTS_PROVIDER", "http").lower()
 TTS_BASE_URL = os.getenv("TTS_BASE_URL", "")
-AUDIO_DIR = os.environ["AUDIO_DIR"]
-AUDIO_SHARDS_DIR = os.path.join(AUDIO_DIR, "audio_shards")
 WER_THRESHOLD = 0.2  # 20% WER threshold for logging warnings
 MAX_TTS_ATTEMPTS = 3
 
 WER_NORMALIZE = jiwer.Compose(
     [
-        jiwer.SubstituteRegexes({r"\s+": " "}),
+        jiwer.SubstituteRegexes({r"[_=<>|`]": " ", r"\s+": " "}),
         jiwer.ToLowerCase(),
         jiwer.RemovePunctuation(),
         jiwer.RemoveMultipleSpaces(),
@@ -30,6 +34,20 @@ WER_NORMALIZE = jiwer.Compose(
         jiwer.ReduceToListOfListOfWords(),
     ]
 )
+
+# Shell commands, URLs, code fences, and config blocks are structurally
+# unspeakable by TTS/ASR round-trip comparison - retrying never helps since
+# the mismatch isn't random. Skip the WER gate for these instead of burning
+# 3x TTS+ASR calls per block on a check that can never pass.
+CODE_LIKE_RE = re.compile(
+    r"(https?://|^\s*[$#>]|```|-{1,2}\w[\w-]*=|\b\w+@\w+|::|/[\w./-]+/|\.(py|json|toml|sh|js)\b)",
+    re.MULTILINE,
+)
+
+
+def _looks_like_code(text: str) -> bool:
+    return bool(CODE_LIKE_RE.search(text))
+
 
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 POLLY_VOICE_ID = os.getenv("POLLY_VOICE_ID", "Bianca")
@@ -82,35 +100,18 @@ def call_tts(text: str, language: str = "it", voice_id: str = "Leonardo.wav") ->
     raise ValueError(f"Unsupported TTS_PROVIDER={TTS_PROVIDER!r}; use 'http' or 'polly'")
 
 
-def save_audio_shard(audio_bytes: bytes, safe_title: str, block_index: int, attempt: int) -> str:
-    os.makedirs(AUDIO_SHARDS_DIR, exist_ok=True)
-    shard_path = os.path.join(
-        AUDIO_SHARDS_DIR, f"{safe_title}_block{block_index}_attempt{attempt}.wav"
-    )
-    with open(shard_path, "wb") as f:
-        f.write(audio_bytes)
-    return shard_path
-
-
-def _final_shard_path(safe_title: str, block_index: int) -> str:
-    # No "attemptN" suffix: this is the accepted take (whatever the loop in
-    # generate_speech settled on), separate from the per-attempt debug shards
-    # above. Its presence means the block never needs TTS+ASR again.
-    return os.path.join(AUDIO_SHARDS_DIR, f"{safe_title}_block{block_index}.wav")
-
-
-def load_final_audio_shard(safe_title: str, block_index: int) -> bytes | None:
-    path = _final_shard_path(safe_title, block_index)
-    if not os.path.exists(path):
+def load_final_audio_shard(title: str, block_index: int) -> bytes | None:
+    # This is the accepted take, whatever the loop in generate_speech settled
+    # on. Its presence means the block never needs TTS+ASR again.
+    path = audio_shard_path(title, block_index)
+    if not path.exists():
         return None
-    with open(path, "rb") as f:
-        return f.read()
+    return path.read_bytes()
 
 
-def save_final_audio_shard(audio_bytes: bytes, safe_title: str, block_index: int) -> None:
-    os.makedirs(AUDIO_SHARDS_DIR, exist_ok=True)
-    with open(_final_shard_path(safe_title, block_index), "wb") as f:
-        f.write(audio_bytes)
+def save_final_audio_shard(audio_bytes: bytes, title: str, block_index: int) -> None:
+    AUDIO_SHARDS_DIR.mkdir(parents=True, exist_ok=True)
+    audio_shard_path(title, block_index).write_bytes(audio_bytes)
 
 
 def _word_diff(text: str, transcription: str) -> str:
@@ -122,20 +123,24 @@ def _word_diff(text: str, transcription: str) -> str:
 
 def generate_speech(
     text: str,
-    safe_title: str,
+    title: str,
     block_index: int,
     language: str = "it",
     voice_id: str = "Leonardo.wav",
 ) -> bytes:
-    cached = load_final_audio_shard(safe_title, block_index)
+    cached = load_final_audio_shard(title, block_index)
     if cached is not None:
-        logger.info("[%s] block %d: resumed audio from shard", safe_title, block_index)
+        logger.info("[%s] block %d: resumed audio from shard", title, block_index)
         return cached
+
+    if _looks_like_code(text):
+        audio_bytes = call_tts(text, language, voice_id)
+        save_final_audio_shard(audio_bytes, title, block_index)
+        return audio_bytes
 
     attempt = 0
     while True:
         audio_bytes = call_tts(text, language, voice_id)
-        save_audio_shard(audio_bytes, safe_title, block_index, attempt)
         transcription = generate_transcription(audio_bytes, lang=language)
 
         wer = jiwer.wer(
@@ -172,22 +177,22 @@ def generate_speech(
             _word_diff(text, transcription),
         )
 
-    save_final_audio_shard(audio_bytes, safe_title, block_index)
+    save_final_audio_shard(audio_bytes, title, block_index)
     return audio_bytes
 
 
-def generate_audio_from_blocks(documents, title: str, dest_dir: str = AUDIO_DIR) -> str:
-    os.makedirs(dest_dir, exist_ok=True)
-    safe_title = safe_filename(title)
-    dest_path = os.path.join(dest_dir, safe_title + ".mp3")
+def generate_audio_from_blocks(documents, title: str) -> str:
+    """Concatenate every block's audio into the episode the podcast serves."""
+    EPISODES_DIR.mkdir(parents=True, exist_ok=True)
+    dest_path = episode_path(title)
     audio_bytes = bytearray()
 
     for index, document in enumerate(documents.blocks):
         if document.translated_text is None:
             continue
-        audio_bytes.extend(generate_speech(document.translated_text, safe_title, index))
+        text = document.translated_text
+        audio_bytes.extend(generate_speech(text, title, index))
         logger.info("[%s] render_for_tts: block %d", title, index)
 
-    with open(dest_path, "wb") as f:
-        f.write(audio_bytes)
-    return dest_path
+    dest_path.write_bytes(audio_bytes)
+    return str(dest_path)

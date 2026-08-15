@@ -1,6 +1,6 @@
 # Project-specific
 post_store.sqlite3
-images/
+data/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -222,5 +222,4 @@ __marimo__/
 .streamlit/secrets.toml
 tmp
 .vscode
-audio
 terminal_to_debug.txt

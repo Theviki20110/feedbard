@@ -16,13 +16,14 @@ RUN uv sync --frozen --no-install-project
 COPY . .
 RUN uv sync --frozen
 
-RUN mkdir -p /app/audio /app/images /app/data
+RUN mkdir -p /app/data
 
+# One volume holds everything that must survive a restart: the seen-posts DB
+# plus the artefact tree paths.py lays out underneath DATA_DIR.
 ENV DB_PATH=/app/data/post_store.sqlite3 \
-    AUDIO_DIR=/app/audio \
-    IMAGES_DIR=/app/images \
+    DATA_DIR=/app/data \
     CRON_INTERVAL_SECONDS=10800
 
-VOLUME ["/app/data", "/app/audio", "/app/images"]
+VOLUME ["/app/data"]
 
 ENTRYPOINT ["/app/entrypoint.sh"]

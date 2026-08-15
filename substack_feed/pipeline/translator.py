@@ -1,4 +1,3 @@
-import os
 from concurrent.futures import ThreadPoolExecutor
 
 from jinja2 import Template
@@ -6,7 +5,7 @@ from jinja2 import Template
 from substack_feed.ingestion.html_parser import VIS_RE
 from substack_feed.llm_client import generate_response
 from substack_feed.logger import logger
-from substack_feed.paths import ASSETS_DIR, safe_filename
+from substack_feed.paths import ASSETS_DIR, TEXT_SHARDS_DIR, text_shard_path
 
 TRANSLATOR_PROMPT_PATH = ASSETS_DIR / "translator_prompt.txt"
 
@@ -19,26 +18,18 @@ MAX_CHUNK_CHARS = 6000
 # Per-block translated text, written right after each LLM call succeeds. If
 # the process is interrupted mid-article, restarting skips every block whose
 # shard is already on disk instead of re-billing the model for it.
-AUDIO_DIR = os.environ["AUDIO_DIR"]
-TEXT_SHARDS_DIR = os.path.join(AUDIO_DIR, "text_shards")
 
 
-def _shard_path(safe_title: str, index: int) -> str:
-    return os.path.join(TEXT_SHARDS_DIR, f"{safe_title}_block{index}.txt")
-
-
-def load_text_shard(safe_title: str, index: int) -> str | None:
-    path = _shard_path(safe_title, index)
-    if not os.path.exists(path):
+def load_text_shard(title: str, index: int) -> str | None:
+    path = text_shard_path(title, index)
+    if not path.exists():
         return None
-    with open(path, encoding="utf-8") as f:
-        return f.read()
+    return path.read_text(encoding="utf-8")
 
 
-def save_text_shard(safe_title: str, index: int, translated_text: str) -> None:
-    os.makedirs(TEXT_SHARDS_DIR, exist_ok=True)
-    with open(_shard_path(safe_title, index), "w", encoding="utf-8") as f:
-        f.write(translated_text)
+def save_text_shard(title: str, index: int, translated_text: str) -> None:
+    TEXT_SHARDS_DIR.mkdir(parents=True, exist_ok=True)
+    text_shard_path(title, index).write_text(translated_text, encoding="utf-8")
 
 
 def translate_chunk(chunk: str, target_language: str, index: int) -> str:
@@ -59,23 +50,26 @@ def translate_chunk(chunk: str, target_language: str, index: int) -> str:
             f"chunk {index}: expected {len(expected)} placeholders, found {len(found)}; "
             f"missing={missing} extra={extra}"
         )
-    return translated_chunk
+
+    # The model sometimes spontaneously wraps literal/technical terms in
+    # these mathematical double-angle-bracket glyphs (not part of any prompt
+    # instruction). Left in place they get narrated verbatim by the TTS engine.
+    return translated_chunk.replace("⟪", "").replace("⟫", "")
 
 
-def _translate_block(index: int, block, target_language: str, safe_title: str) -> None:
+def _translate_block(index: int, block, target_language: str, title: str) -> None:
     block.translated_text = translate_chunk(block.text, target_language, index)
-    save_text_shard(safe_title, index, block.translated_text)
+    save_text_shard(title, index, block.translated_text)
     logger.debug(block.translated_text)
 
 
 def translate_blocks(document, title: str, target_language: str = "Italian", max_workers: int = 8):
-    safe_title = safe_filename(title)
     candidates = [(i, b) for i, b in enumerate(document.blocks) if b.text != ""]
 
     loaded = 0
     todo = []
     for i, b in candidates:
-        shard = load_text_shard(safe_title, i)
+        shard = load_text_shard(title, i)
         if shard is not None:
             b.translated_text = shard
             loaded += 1
@@ -94,8 +88,6 @@ def translate_blocks(document, title: str, target_language: str = "Italian", max
 
     with ThreadPoolExecutor(max_workers=min(max_workers, len(todo))) as pool:
         list(
-            pool.map(
-                lambda item: _translate_block(item[0], item[1], target_language, safe_title), todo
-            )
+            pool.map(lambda item: _translate_block(item[0], item[1], target_language, title), todo)
         )
     return document

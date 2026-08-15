@@ -1,5 +1,4 @@
 import os
-import re
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
 
@@ -9,11 +8,12 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
 from substack_feed.ingestion.substack_fetcher import get_text_from_html
+from substack_feed.logger import logger
+from substack_feed.paths import COVERS_DIR, cover_path, find_cover
 
 load_dotenv()
 
 FEEDS_LIST_PATH = os.environ["FEEDS_LIST_PATH"]
-IMAGES_DIR = os.environ["IMAGES_DIR"]
 
 
 def read_feed_urls(path: str = FEEDS_LIST_PATH) -> list[str]:
@@ -57,31 +57,44 @@ def get_post_entries_v2(feed_url: str) -> list[dict]:
     return entries
 
 
-def save_image(image_url: str, dest_dir: str = IMAGES_DIR) -> str | None:
-    if not image_url:
-        return None
-    os.makedirs(dest_dir, exist_ok=True)
-    ext = os.path.splitext(urlparse(image_url).path)[1] or ".jpg"
-    basename = os.path.basename(urlparse(image_url).path)
-    filename = re.sub(r"[^a-zA-Z0-9._-]", "_", basename) or "image"
-    if not filename.endswith(ext):
-        filename += ext
-    dest_path = os.path.join(dest_dir, filename)
+def save_cover(image_url: str, title: str) -> str | None:
+    """Store the post's artwork under the article slug.
 
-    r = requests.get(image_url, timeout=30)
-    r.raise_for_status()
-    with open(dest_path, "wb") as f:
-        f.write(r.content)
-    return dest_path
+    Naming it after the article, rather than after the remote file, is what
+    lets the podcast container pair an episode with its cover: both sides are
+    derived from the same title, so no lookup table has to be kept in sync.
+    """
+    if not image_url or not title:
+        return None
+
+    existing = find_cover(title)
+    if existing is not None:
+        return str(existing)
+
+    ext = os.path.splitext(urlparse(image_url).path)[1] or ".jpg"
+    dest_path = cover_path(title, ext)
+
+    try:
+        r = requests.get(image_url, timeout=30)
+        r.raise_for_status()
+    except requests.RequestException:
+        # A missing cover costs the episode its artwork, not its audio.
+        logger.warning("cover fetch failed for %s", image_url, exc_info=True)
+        return None
+
+    COVERS_DIR.mkdir(parents=True, exist_ok=True)
+    dest_path.write_bytes(r.content)
+    return str(dest_path)
 
 
 def _build_feed_item(entry: dict) -> dict:
     content, metadata = get_text_from_html(entry["url"])
+    title = metadata["title"]
     return {
         "url": entry["url"],
-        "title": metadata["title"],
+        "title": title,
         "text": content,
-        "image_path": save_image(entry["image_url"]),
+        "cover_path": save_cover(entry["image_url"], title),
     }
 
 
