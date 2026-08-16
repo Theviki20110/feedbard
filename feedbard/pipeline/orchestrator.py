@@ -1,6 +1,7 @@
 from feedbard.ingestion.html_parser import Document, extract
 from feedbard.logger import logger
 from feedbard.pipeline.audio_renderer import generate_audio_from_blocks
+from feedbard.pipeline.code_describer import describe_code_blocks
 from feedbard.pipeline.narration import attach_descriptions
 from feedbard.pipeline.publisher import publish
 from feedbard.pipeline.sanitizer import sanitize_blocks
@@ -45,8 +46,12 @@ def process_item(item: dict) -> str:
     logger.info("[%s] describe_tables", title)
     describe_tables(doc, title)
 
-    # Before translation: this is what gives the figures and the tables a
-    # place in the episode instead of leaving them as silent gaps.
+    logger.info("[%s] describe_code_blocks", title)
+    describe_code_blocks(doc, title)
+
+    # Before translation: this is what gives the figures, tables and code
+    # blocks a place in the episode instead of leaving them as silent gaps
+    # (or, for code, being read aloud as literal text).
     attached = attach_descriptions(doc)
     logger.info("[%s] attach_descriptions: %d non-prose block(s) narratable", title, attached)
 

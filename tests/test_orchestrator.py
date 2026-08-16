@@ -43,6 +43,7 @@ def stages(monkeypatch):
     monkeypatch.setattr(orchestrator, "extract", make("extract", lambda html: doc))
     monkeypatch.setattr(orchestrator, "describe_visuals", make("describe_visuals"))
     monkeypatch.setattr(orchestrator, "describe_tables", make("describe_tables"))
+    monkeypatch.setattr(orchestrator, "describe_code_blocks", make("describe_code_blocks"))
     monkeypatch.setattr(orchestrator, "attach_descriptions", make("attach_descriptions", 0))
     monkeypatch.setattr(
         orchestrator, "translate_blocks", make("translate_blocks", lambda d, t: d)
@@ -61,6 +62,7 @@ def test_process_item_runs_the_stages_in_pipeline_order(stages):
         "extract",
         "describe_visuals",
         "describe_tables",
+        "describe_code_blocks",
         "attach_descriptions",
         "translate_blocks",
         "sanitize_blocks",
@@ -69,12 +71,13 @@ def test_process_item_runs_the_stages_in_pipeline_order(stages):
     ]
 
 
-def test_visuals_and_tables_are_described_before_descriptions_are_attached(stages):
+def test_visuals_tables_and_code_are_described_before_descriptions_are_attached(stages):
     # attach_descriptions reads Visual.description / Block.description, which
     # only exist once the describers have run.
     orchestrator.process_item(_item())
     assert stages.index("describe_visuals") < stages.index("attach_descriptions")
     assert stages.index("describe_tables") < stages.index("attach_descriptions")
+    assert stages.index("describe_code_blocks") < stages.index("attach_descriptions")
 
 
 def test_descriptions_are_attached_before_translation(stages):

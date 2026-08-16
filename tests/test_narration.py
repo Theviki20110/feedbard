@@ -59,6 +59,26 @@ def test_table_description_becomes_narratable():
     assert doc.blocks[0].translated_text.startswith("Il modello")
 
 
+def test_code_description_becomes_narratable():
+    block = Block(Kind.CODE, text="def add(a, b):\n    return a + b", lang="python")
+    block.description = "Il codice definisce una funzione che somma due numeri."
+    doc = _doc([block])
+    assert attach_descriptions(doc) == 1
+    assert doc.blocks[0].translated_text == "Il codice definisce una funzione che somma due numeri."
+
+
+def test_code_whose_description_failed_stays_silent_not_raw():
+    # Unlike VISUAL/TABLE, a CODE block's own `text` is never empty (it's the
+    # raw code): a failed description has to mark the block handled, or the
+    # raw code would fall through to the translator and be read aloud as-is.
+    block = Block(Kind.CODE, text="[r r r r r r r r]")
+    block.description = None
+    doc = _doc([block])
+    assert attach_descriptions(doc) == 0
+    assert doc.blocks[0].translated_text == ""
+    assert doc.blocks[0].text == "[r r r r r r r r]"
+
+
 def test_prose_is_left_for_the_translator():
     doc = _doc([Block(Kind.PROSE, text="testo originale")])
     assert attach_descriptions(doc) == 0

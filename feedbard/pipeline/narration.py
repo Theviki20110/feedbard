@@ -4,8 +4,11 @@
 its grid but no prose. Neither is something a speech engine can read, so
 without this stage both are positions in the article the listener never
 learns about -- and the vision pass runs, is billed, and its output goes
-nowhere. This module is the join: it takes what the describers produced and
-writes it into the block that stood there.
+nowhere. A CODE block is the odd one out: `extract()` does leave it with
+text, the raw code, which is exactly what must never reach the translator
+now that `code_describer` exists to describe it instead. This module is the
+join: it takes what the describers produced and writes it into the block
+that stood there.
 
 The description is written to `translated_text`, not to `text`, for two
 reasons. The describers already write in the narration language, so the
@@ -42,6 +45,18 @@ def attach_descriptions(doc: Document) -> int:
             text = (visual.description or "").strip()
         elif block.kind is Kind.TABLE:
             text = (block.description or "").strip()
+        elif block.kind is Kind.CODE:
+            # VISUAL and TABLE start with an empty `text`, so skipping them
+            # here (translated_text left at None) is enough to keep them out
+            # of translate_blocks' candidates. CODE does not: its `text` is
+            # the raw code, so a failed description has to mark the block
+            # handled (translated_text = "") or the raw code falls through to
+            # translate_blocks and gets read aloud verbatim -- the exact
+            # failure this stage exists to prevent.
+            block.translated_text = (block.description or "").strip()
+            if block.translated_text:
+                attached += 1
+            continue
         else:
             continue
 

@@ -14,6 +14,7 @@ Layout, rooted at DATA_DIR:
         audio/             synthesized audio, per block
         visual/            image classification + description, per image
         table/             spoken description, per table
+        code/              spoken description, per code block
 
 The split follows the lifetime of the artefacts, not the stage that writes
 them. `episodes/` and `covers/` are the finished goods. `shards/` is
@@ -29,9 +30,10 @@ root, and one volume mount carries all of the pipeline's state.
 
 Episodes, covers, and text/speech/audio shards are all keyed on the same
 `slug()` of the article title, so an episode's artefacts can be found across
-stages without a lookup table. Figures, visual shards and table shards are
-keyed on the content hash of what they describe instead, which is what lets
-the same figure or table reused across two articles be described once.
+stages without a lookup table. Figures, visual shards, table shards and code
+shards are keyed on the content hash of what they describe instead, which is
+what lets the same figure, table or code block reused across two articles be
+described once.
 
 Publishing then assembles LIBRARY_DIR, a separate tree in the layout
 Audiobookshelf expects:
@@ -81,6 +83,7 @@ SPEECH_SHARDS_DIR = SHARDS_DIR / "speech"
 AUDIO_SHARDS_DIR = SHARDS_DIR / "audio"
 VISUAL_SHARDS_DIR = SHARDS_DIR / "visual"
 TABLE_SHARDS_DIR = SHARDS_DIR / "table"
+CODE_SHARDS_DIR = SHARDS_DIR / "code"
 
 ALL_DIRS = (
     EPISODES_DIR,
@@ -92,6 +95,7 @@ ALL_DIRS = (
     AUDIO_SHARDS_DIR,
     VISUAL_SHARDS_DIR,
     TABLE_SHARDS_DIR,
+    CODE_SHARDS_DIR,
 )
 
 
@@ -157,6 +161,10 @@ def visual_shard_path(vid: str) -> Path:
 
 def table_shard_path(tid: str) -> Path:
     return TABLE_SHARDS_DIR / f"{tid}.json"
+
+
+def code_shard_path(cid: str) -> Path:
+    return CODE_SHARDS_DIR / f"{cid}.json"
 
 
 # Audiobookshelf parses author and title out of the folder names themselves,
