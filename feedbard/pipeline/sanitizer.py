@@ -278,10 +278,18 @@ def scrub(text: str, language: str = TARGET_LANGUAGE) -> str:
 # them buys nothing but latency, cost, and a chance to paraphrase away a
 # number. Kept deliberately broad: a false positive costs one call, a false
 # negative ships a glyph to the voice.
+#
+# A capitalized name directly followed by a dotted version number ("DeepSeek
+# 4.5", "GPT-4.5") is the same problem in prose form as the math symbols
+# above: read raw, "4.5" is ambiguous between a version's "point" and a
+# decimal's locale-specific separator, and the deterministic scrub has no way
+# to know which one it is -- only the sanitizer prompt's contextual judgment
+# does (see "What NOT to convert" in sanitizer_prompt.txt).
 NEEDS_LLM_RE = re.compile(
     r"[Ͱ-Ͽ∀-⋿←-⇿" + re.escape(SYM_OPEN + SYM_CLOSE + _SUB + _SUP) + r"`|\\{}<>=]"
     r"|```|^\s{0,3}#{1,6}\s|^\s{0,3}[*+-]\s|\*\*|\[[^\]]+\]\("
-    r"|(?<!\w)[A-Za-z]_\w|https?://|\\n",
+    r"|(?<!\w)[A-Za-z]_\w|https?://|\\n"
+    r"|\b[A-Z][A-Za-z]*[ -]\d+\.\d+\b",
     re.MULTILINE,
 )
 

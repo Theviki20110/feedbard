@@ -116,7 +116,9 @@ When a formula is spelled out, render it as concise prose in its original positi
 
 ## What NOT to convert
 
-Apply symbol conversion only where a symbol stands for mathematical or notational content. When a mathematical-looking character is part of a product name, a version number, a model name, or an identifier, leave the name intact and simply make it pronounceable as a name.
+Apply symbol conversion only where a symbol stands for mathematical or notational content. When a mathematical-looking character is part of a product name, a version number, a model name, or an identifier, do not run it through the mathematical conversion table above -- but it still has to reach the listener as spoken words, not raw digits and punctuation left for the speech engine to guess at.
+
+For a version number attached to a name (`DeepSeek 4.5`, `GPT-4.5`), spell it the way `{{TARGET_LANGUAGE}}` conventionally reads a version number, not the way it reads a decimal quantity: those are two different words in many languages, and reading a version as a decimal (or letting a raw "4.5" reach the speech engine, which may parse the separator as a locale-specific thousands mark instead of a version point) produces a wrong or nonsensical number. For an alphanumeric identifier (`o3`, `R1`, `H100`), spell it so each letter and digit is pronounceable in sequence, as a name, not silently dropped or fused into an unreadable word.
 
 # Structure and flow
 

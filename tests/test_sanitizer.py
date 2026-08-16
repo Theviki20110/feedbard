@@ -3,6 +3,7 @@ import pytest
 from feedbard.pipeline import sanitizer
 from feedbard.pipeline.lexicon import load_lexicon
 from feedbard.pipeline.sanitizer import (
+    NEEDS_LLM_RE,
     ModelRefusedError,
     check_usable,
     is_effectively_empty,
@@ -238,6 +239,39 @@ def test_fallback_keeps_scrubbed_text_when_repair_misbehaves(monkeypatch):
     out = sanitize_chunk("il codice è qui: https://github.com/rasbt/evals", index=0)
     assert "http" not in out and "github" not in out
     assert out == "il codice è qui."
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "DeepSeek 4.5 ha battuto il benchmark",
+        "GPT-4.5 è uscito questa settimana",
+    ],
+)
+def test_needs_llm_matches_a_name_followed_by_a_version_number(text):
+    # "4.5" read raw is ambiguous between a version's "point" and a locale's
+    # decimal/thousands separator: only the LLM pass can tell them apart.
+    assert NEEDS_LLM_RE.search(text)
+
+
+def test_needs_llm_does_not_match_a_plain_decimal_metric():
+    # A bare decimal with no name attached is not the pattern this exists
+    # for: routing every metric in an ML article through the LLM would be a
+    # much bigger cost change than the reported failure calls for.
+    assert not NEEDS_LLM_RE.search("l'accuratezza è salita al 95.3 per cento")
+
+
+def test_sanitize_chunk_routes_a_versioned_name_through_the_llm(monkeypatch):
+    calls = []
+
+    def generate_response(prompt):
+        calls.append(prompt)
+        return "DeepSeek quattro punto cinque ha battuto il benchmark.", 0.0
+
+    monkeypatch.setattr(sanitizer, "generate_response", generate_response)
+    out = sanitize_chunk("DeepSeek 4.5 ha battuto il benchmark.", index=0)
+    assert len(calls) == 1
+    assert "quattro punto cinque" in out
 
 
 def test_no_repair_call_without_links(monkeypatch):
