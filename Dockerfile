@@ -3,6 +3,7 @@ FROM python:3.12-slim
 # ffmpeg: audio concat/encode step in the pipeline needs it at runtime.
 # gosu: the entrypoint starts as root to fix volume ownership, then drops to
 # PUID/PGID -- the Unraid convention for keeping the media library readable.
+ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     gosu \

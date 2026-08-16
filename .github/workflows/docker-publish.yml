@@ -9,6 +9,12 @@ on:
 env:
   IMAGE: ghcr.io/theviki20110/feedbard
 
+# The arm64 half is emulated and slow, so a second push while a build is still
+# running supersedes it rather than queueing behind it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
