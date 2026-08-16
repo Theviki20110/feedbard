@@ -51,6 +51,14 @@ def _looks_like_code(text: str) -> bool:
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 POLLY_VOICE_ID = os.getenv("POLLY_VOICE_ID", "Bianca")
 POLLY_ENGINE = os.getenv("POLLY_ENGINE", "generative")
+# Polly wants a BCP-47 code ("it-IT"); the HTTP TTS server and the ASR QA step
+# below both want the bare short code ("it"). Neither is derivable from
+# TARGET_LANGUAGE ("Italian") without a name->code table, so an operator
+# narrating in another language sets these alongside it and POLLY_VOICE_ID,
+# same as the README's "Narration language" section already says to do.
+POLLY_LANGUAGE_CODE = os.getenv("POLLY_LANGUAGE_CODE", "it-IT")
+TTS_LANGUAGE_CODE = os.getenv("TTS_LANGUAGE_CODE", "it")
+TTS_VOICE_ID = os.getenv("TTS_VOICE_ID", "Leonardo.wav")
 
 _polly_client = None
 
@@ -62,14 +70,14 @@ def _get_polly_client():
     return _polly_client
 
 
-def call_tts_http(text: str, language: str = "it", voice_id: str = "Leonardo.wav") -> bytes:
+def call_tts_http(text: str, voice_id: str = TTS_VOICE_ID) -> bytes:
     body = {
         "voice_mode": "predefined",
         "predefined_voice_id": voice_id,
         "output_format": "wav",
         "split_text": True,
         "text": text,
-        "language": language,
+        "language": TTS_LANGUAGE_CODE,
     }
     response = requests.post(
         f"{TTS_BASE_URL}/tts",
@@ -80,22 +88,22 @@ def call_tts_http(text: str, language: str = "it", voice_id: str = "Leonardo.wav
     return response.content
 
 
-def call_tts_polly(text: str, language: str = "it") -> bytes:
+def call_tts_polly(text: str) -> bytes:
     response = _get_polly_client().synthesize_speech(
         Text=text,
         VoiceId=POLLY_VOICE_ID,
         OutputFormat="mp3",
         Engine=POLLY_ENGINE,
-        LanguageCode="it-IT" if language == "it" else language,
+        LanguageCode=POLLY_LANGUAGE_CODE,
     )
     return response["AudioStream"].read()
 
 
-def call_tts(text: str, language: str = "it", voice_id: str = "Leonardo.wav") -> bytes:
+def call_tts(text: str, voice_id: str = TTS_VOICE_ID) -> bytes:
     if TTS_PROVIDER == "polly":
-        return call_tts_polly(text, language)
+        return call_tts_polly(text)
     if TTS_PROVIDER == "http":
-        return call_tts_http(text, language, voice_id)
+        return call_tts_http(text, voice_id)
     raise ValueError(f"Unsupported TTS_PROVIDER={TTS_PROVIDER!r}; use 'http' or 'polly'")
 
 
@@ -124,8 +132,7 @@ def generate_speech(
     text: str,
     title: str,
     block_index: int,
-    language: str = "it",
-    voice_id: str = "Leonardo.wav",
+    voice_id: str = TTS_VOICE_ID,
 ) -> bytes:
     cached = load_final_audio_shard(title, block_index)
     if cached is not None:
@@ -133,12 +140,12 @@ def generate_speech(
         return cached
 
     if _looks_like_code(text):
-        audio_bytes = call_tts(text, language, voice_id)
+        audio_bytes = call_tts(text, voice_id)
         save_final_audio_shard(audio_bytes, title, block_index)
         return audio_bytes
 
-    audio_bytes = call_tts(text, language, voice_id)
-    transcription = generate_transcription(audio_bytes, lang=language)
+    audio_bytes = call_tts(text, voice_id)
+    transcription = generate_transcription(audio_bytes, lang=TTS_LANGUAGE_CODE)
 
     wer = jiwer.wer(
         text,

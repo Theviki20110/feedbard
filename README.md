@@ -167,12 +167,22 @@ deterministic scrub in `pipeline/sanitizer.py` reads its spoken forms for
 symbols (`σ` -> "sigma", `<=` -> "minore o uguale a") from
 `assets/lexicons/<language>.json`.
 
-Supporting a new language means adding one JSON file there -- `symbols` for
-single glyphs, `sequences` for ordered multi-character replacements, longest
-first -- and pointing `TARGET_LANGUAGE` and the TTS voice at it. A language
-with no lexicon file still runs: the scrub logs a warning and falls back to
-the English spoken forms, so a symbol is narrated in the wrong language rather
-than silently dropped from a claim.
+`TARGET_LANGUAGE` does not, by itself, change what the TTS/ASR stage speaks:
+a language name like `Italian` isn't the language code those services expect,
+and Polly wants a different code format (`it-IT`) than the HTTP TTS server
+and the ASR QA step do (`it`). Point them at the same language explicitly:
+
+- `TTS_VOICE_ID` / `TTS_LANGUAGE_CODE` -- voice and short code for
+  `TTS_PROVIDER=http` (also used by the ASR round-trip check).
+- `POLLY_VOICE_ID` / `POLLY_LANGUAGE_CODE` -- voice and BCP-47 code for
+  `TTS_PROVIDER=polly`.
+
+Supporting a new language means adding one JSON file to `assets/lexicons/`
+-- `symbols` for single glyphs, `sequences` for ordered multi-character
+replacements, longest first -- and pointing `TARGET_LANGUAGE` plus the four
+variables above at it. A language with no lexicon file still runs: the scrub
+logs a warning and falls back to the English spoken forms, so a symbol is
+narrated in the wrong language rather than silently dropped from a claim.
 
 ## What a listener hears that they cannot see
 

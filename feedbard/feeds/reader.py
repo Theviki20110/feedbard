@@ -8,7 +8,7 @@ import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
-from feedbard.ingestion.fetcher import fetch_article
+from feedbard.ingestion.fetcher import USER_AGENT, fetch_article
 from feedbard.logger import logger
 from feedbard.paths import COVERS_DIR, DATA_DIR, cover_path, find_cover, slug
 
@@ -26,7 +26,7 @@ def read_feed_urls(path: str = FEEDS_LIST_PATH) -> list[str]:
 
 def _extract_og_image(post_url: str) -> str | None:
     try:
-        r = requests.get(post_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
+        r = requests.get(post_url, headers={"User-Agent": USER_AGENT}, timeout=30)
         r.raise_for_status()
     except requests.RequestException:
         return None
@@ -97,7 +97,7 @@ def get_post_entries_v2(feed_url: str) -> list[dict]:
     with the poll. Passing them downstream is what lets the generic path skip
     a per-post request that only Substack ever needed.
     """
-    r = requests.get(feed_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
+    r = requests.get(feed_url, headers={"User-Agent": USER_AGENT}, timeout=30)
     r.raise_for_status()
     feed = feedparser.parse(r.content)
     feed_meta = feed.feed
