@@ -1,7 +1,7 @@
 import pytest
 
-from substack_feed import paths
-from substack_feed.pipeline import publisher
+from feedbard import paths
+from feedbard.pipeline import publisher
 
 # A real MPEG-1 Layer III frame: mutagen refuses to tag a file it cannot
 # parse, so a dummy byte string will not do. Header ff fb 90 c0 declares

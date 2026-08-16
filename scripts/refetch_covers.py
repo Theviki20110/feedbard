@@ -17,12 +17,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from substack_api import Post  # noqa: E402
 
-from substack_feed.feeds.reader import (  # noqa: E402
+from feedbard.feeds.reader import (  # noqa: E402
     get_post_entries_v2,
     read_feed_urls,
     save_cover,
 )
-from substack_feed.paths import EPISODES_DIR, find_cover, slug  # noqa: E402
+from feedbard.paths import EPISODES_DIR, find_cover, slug  # noqa: E402
 
 
 def main() -> None:

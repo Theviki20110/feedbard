@@ -19,9 +19,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from substack_feed.feeds.reader import find_posts_by_slug  # noqa: E402
-from substack_feed.paths import EPISODES_DIR, find_cover  # noqa: E402
-from substack_feed.pipeline.publisher import library_summary, publish_item  # noqa: E402
+from feedbard.feeds.reader import find_posts_by_slug  # noqa: E402
+from feedbard.paths import EPISODES_DIR, find_cover  # noqa: E402
+from feedbard.pipeline.publisher import library_summary, publish_item  # noqa: E402
 
 
 def available() -> list[str]:

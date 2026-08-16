@@ -1,8 +1,8 @@
 import pytest
 
-from substack_feed.pipeline import sanitizer
-from substack_feed.pipeline.lexicon import load_lexicon
-from substack_feed.pipeline.sanitizer import (
+from feedbard.pipeline import sanitizer
+from feedbard.pipeline.lexicon import load_lexicon
+from feedbard.pipeline.sanitizer import (
     ModelRefusedError,
     check_usable,
     is_effectively_empty,

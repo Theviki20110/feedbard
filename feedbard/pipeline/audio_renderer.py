@@ -7,9 +7,9 @@ import jiwer
 import requests
 from dotenv import load_dotenv
 
-from substack_feed.asr_client import generate_transcription
-from substack_feed.logger import logger
-from substack_feed.paths import (
+from feedbard.asr_client import generate_transcription
+from feedbard.logger import logger
+from feedbard.paths import (
     AUDIO_SHARDS_DIR,
     EPISODES_DIR,
     audio_shard_path,

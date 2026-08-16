@@ -2,12 +2,12 @@ from concurrent.futures import ThreadPoolExecutor
 
 from jinja2 import Template
 
-from substack_feed.ingestion.html_parser import VIS_RE
-from substack_feed.llm_client import generate_response
-from substack_feed.logger import logger
-from substack_feed.paths import ASSETS_DIR, TEXT_SHARDS_DIR, text_shard_path
-from substack_feed.pipeline.lexicon import TARGET_LANGUAGE
-from substack_feed.pipeline.sanitizer import check_usable, is_effectively_empty
+from feedbard.ingestion.html_parser import VIS_RE
+from feedbard.llm_client import generate_response
+from feedbard.logger import logger
+from feedbard.paths import ASSETS_DIR, TEXT_SHARDS_DIR, text_shard_path
+from feedbard.pipeline.lexicon import TARGET_LANGUAGE
+from feedbard.pipeline.sanitizer import check_usable, is_effectively_empty
 
 TRANSLATOR_PROMPT_PATH = ASSETS_DIR / "translator_prompt.txt"
 

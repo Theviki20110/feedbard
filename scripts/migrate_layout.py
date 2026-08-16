@@ -16,7 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from substack_feed.paths import (  # noqa: E402
+from feedbard.paths import (  # noqa: E402
     AUDIO_SHARDS_DIR,
     COVERS_DIR,
     EPISODES_DIR,

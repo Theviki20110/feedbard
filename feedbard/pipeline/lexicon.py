@@ -25,8 +25,8 @@ from functools import cache
 
 from dotenv import load_dotenv
 
-from substack_feed.logger import logger
-from substack_feed.paths import ASSETS_DIR
+from feedbard.logger import logger
+from feedbard.paths import ASSETS_DIR
 
 load_dotenv()
 

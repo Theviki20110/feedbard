@@ -8,9 +8,9 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from substack_api import Post
 
-from substack_feed.ingestion.substack_fetcher import get_text_from_html
-from substack_feed.logger import logger
-from substack_feed.paths import COVERS_DIR, cover_path, find_cover, slug
+from feedbard.ingestion.substack_fetcher import get_text_from_html
+from feedbard.logger import logger
+from feedbard.paths import COVERS_DIR, cover_path, find_cover, slug
 
 load_dotenv()
 

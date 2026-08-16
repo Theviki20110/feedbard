@@ -1,4 +1,4 @@
-from substack_feed import paths
+from feedbard import paths
 
 
 def test_episode_and_cover_share_a_stem():

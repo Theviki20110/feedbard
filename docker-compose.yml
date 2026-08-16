@@ -1,5 +1,5 @@
 services:
-  substack-feed:
+  feedbard:
     build: .
     env_file: .env
     volumes:

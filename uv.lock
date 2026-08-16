@@ -903,7 +903,7 @@ wheels = [
 ]
 
 [[package]]
-name = "substack-feed"
+name = "feedbard"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

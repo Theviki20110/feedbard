@@ -1,4 +1,4 @@
-from substack_feed.feeds.reader import read_feed_urls
+from feedbard.feeds.reader import read_feed_urls
 
 
 def test_read_feed_urls_skips_blank_lines_and_comments(tmp_path):

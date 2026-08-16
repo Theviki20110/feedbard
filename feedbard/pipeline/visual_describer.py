@@ -19,10 +19,10 @@ import requests
 from jinja2 import Template
 from PIL import Image
 
-from substack_feed.ingestion.html_parser import Document, Visual
-from substack_feed.llm_client import generate_vision_response
-from substack_feed.logger import logger
-from substack_feed.paths import (
+from feedbard.ingestion.html_parser import Document, Visual
+from feedbard.llm_client import generate_vision_response
+from feedbard.logger import logger
+from feedbard.paths import (
     ASSETS_DIR,
     FIGURES_DIR,
     VISUAL_SHARDS_DIR,

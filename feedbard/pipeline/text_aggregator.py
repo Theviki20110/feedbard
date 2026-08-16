@@ -1,6 +1,6 @@
 from xml.dom.minidom import Document
 
-from substack_feed.ingestion.html_parser import VIS_TOKEN, Kind
+from feedbard.ingestion.html_parser import VIS_TOKEN, Kind
 
 
 class IntegrityError(RuntimeError):

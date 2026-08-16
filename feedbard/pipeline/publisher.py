@@ -16,8 +16,8 @@ from pathlib import Path
 from mutagen.id3 import APIC, ID3, TALB, TDRC, TIT2, TPE1, TPE2
 from mutagen.mp3 import MP3
 
-from substack_feed.logger import logger
-from substack_feed.paths import (
+from feedbard.logger import logger
+from feedbard.paths import (
     LIBRARY_DIR,
     episode_path,
     find_cover,

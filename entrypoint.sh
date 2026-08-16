@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-echo "substack-feed container start, interval=${CRON_INTERVAL_SECONDS}s"
+echo "feedbard container start, interval=${CRON_INTERVAL_SECONDS}s"
 
 while true; do
     echo "[$(date -Iseconds)] run start"

@@ -1,4 +1,4 @@
-from substack_feed.feeds.store import filter_new_posts, init_db, mark_post_seen
+from feedbard.feeds.store import filter_new_posts, init_db, mark_post_seen
 
 
 def test_filter_new_posts_returns_all_when_none_seen(tmp_path):

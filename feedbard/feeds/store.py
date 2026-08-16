@@ -2,7 +2,7 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 
-from substack_feed.paths import DB_PATH
+from feedbard.paths import DB_PATH
 
 
 def init_db(db_path: str | Path = DB_PATH) -> None:

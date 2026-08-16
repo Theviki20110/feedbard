@@ -2,10 +2,10 @@ import os
 
 from dotenv import load_dotenv
 
-from substack_feed.feeds.reader import get_feeds, get_post_entries_v2, read_feed_urls
-from substack_feed.feeds.store import filter_new_posts, init_db, mark_post_seen
-from substack_feed.logger import logger
-from substack_feed.pipeline.orchestrator import process_feeds
+from feedbard.feeds.reader import get_feeds, get_post_entries_v2, read_feed_urls
+from feedbard.feeds.store import filter_new_posts, init_db, mark_post_seen
+from feedbard.logger import logger
+from feedbard.pipeline.orchestrator import process_feeds
 
 load_dotenv()
 
