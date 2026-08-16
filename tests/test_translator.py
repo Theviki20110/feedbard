@@ -63,6 +63,35 @@ def test_translate_chunk_rejects_a_refusal(monkeypatch):
         translate_chunk("hello", "Italian", 0)
 
 
+def test_translate_chunk_retries_a_refusal_and_keeps_the_later_success(monkeypatch):
+    # A refusal is sampled, not deterministic: the same prompt run again
+    # often just answers normally, so one bad draw should not fail the block.
+    responses = iter(
+        [
+            ("Mi dispiace, ma non posso procedere con questa richiesta.", 0.0),
+            ("ciao mondo", 0.1),
+        ]
+    )
+    monkeypatch.setattr(translator, "generate_response", lambda prompt: next(responses))
+
+    assert translate_chunk("hello", "Italian", 0) == "ciao mondo"
+
+
+def test_translate_chunk_gives_up_after_exhausting_refusal_retries(monkeypatch):
+    calls = []
+
+    def always_refuses(prompt):
+        calls.append(prompt)
+        return "I'm ready to translate. Please provide the text.", 0.0
+
+    monkeypatch.setattr(translator, "generate_response", always_refuses)
+
+    with pytest.raises(ModelRefusedError):
+        translate_chunk("hello", "Italian", 0)
+
+    assert len(calls) == translator.MAX_REFUSAL_RETRIES + 1
+
+
 def test_inline_code_markers_survive_translation(monkeypatch):
     # The sanitizer stage consumes ⟪⟫ markers; the translator must not eat them.
     monkeypatch.setattr(translator, "generate_response", lambda prompt: ("usa ⟪git clone⟫", 0.0))

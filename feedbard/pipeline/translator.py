@@ -6,13 +6,19 @@ from feedbard.llm_client import generate_response
 from feedbard.logger import logger
 from feedbard.paths import ASSETS_DIR, TEXT_SHARDS_DIR, text_shard_path
 from feedbard.pipeline.lexicon import TARGET_LANGUAGE
-from feedbard.pipeline.sanitizer import check_usable, is_effectively_empty
+from feedbard.pipeline.sanitizer import ModelRefusedError, check_usable, is_effectively_empty
 
 TRANSLATOR_PROMPT_PATH = ASSETS_DIR / "translator_prompt.txt"
 
 # Per-block translated text, written right after each LLM call succeeds. If
 # the process is interrupted mid-article, restarting skips every block whose
 # shard is already on disk instead of re-billing the model for it.
+
+# A refusal is sampled, not deterministic: the same prompt run again often
+# just answers normally. Bounded so a block that refuses for a real reason
+# (unlike sanitize_chunk, translate has no mechanical fallback to drop to)
+# still surfaces as ModelRefusedError instead of retrying forever.
+MAX_REFUSAL_RETRIES = 2
 
 
 def load_text_shard(title: str, index: int) -> str | None:
@@ -37,19 +43,36 @@ def translate_chunk(chunk: str, target_language: str, index: int) -> str:
     prompt = Template(TRANSLATOR_PROMPT_PATH.read_text()).render(
         SOURCE_TEXT=chunk, TARGET_LANGUAGE=target_language
     )
-    translated_chunk, elapsed_time = generate_response(prompt)
-    logger.info(
-        "Translation chunk %d to %s completed in %.2f seconds", index, target_language, elapsed_time
-    )
 
-    # Commentary about the task reads exactly like article prose downstream,
-    # so it has to be rejected here rather than discovered in the audio.
-    check_usable(translated_chunk, "translate", index)
+    for attempt in range(MAX_REFUSAL_RETRIES + 1):
+        translated_chunk, elapsed_time = generate_response(prompt)
+        logger.info(
+            "Translation chunk %d to %s completed in %.2f seconds",
+            index,
+            target_language,
+            elapsed_time,
+        )
+        try:
+            # Commentary about the task reads exactly like article prose
+            # downstream, so it has to be rejected here rather than
+            # discovered in the audio.
+            check_usable(translated_chunk, "translate", index, source=chunk)
+        except ModelRefusedError:
+            if attempt == MAX_REFUSAL_RETRIES:
+                raise
+            logger.warning(
+                "translate block %d: refused on attempt %d/%d, retrying",
+                index,
+                attempt + 1,
+                MAX_REFUSAL_RETRIES + 1,
+            )
+            continue
 
-    # The ⟪⟫ markers around inline code (added by the HTML parser) are left in
-    # place on purpose: they tell the sanitizer stage which spans are
-    # identifiers and commands rather than prose. That stage consumes them.
-    return translated_chunk
+        # The ⟪⟫ markers around inline code (added by the HTML parser) are
+        # left in place on purpose: they tell the sanitizer stage which spans
+        # are identifiers and commands rather than prose. That stage
+        # consumes them.
+        return translated_chunk
 
 
 def _translate_block(index: int, block, target_language: str, title: str) -> None:

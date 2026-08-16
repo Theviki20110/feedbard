@@ -22,7 +22,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 
@@ -110,6 +110,70 @@ GENERIC_ANCHORS = frozenset(
         "sign in",
     }
 )
+
+# A "buy the book" list item: a single link to a retailer, plus at most a
+# short parenthetical (format, page count, "early access"). Dropped at the
+# block level rather than sent to the translator -- a blurb naming a page
+# count reads, out of context, like a request to reproduce the book itself,
+# and models have refused to translate it on copyright grounds.
+#
+# Confirmed on a live Substack post: the href is often the retailer's own
+# short-link domain (Manning's `mng.bz`, Amazon's `amzn.to`), not
+# `manning.com`/`amazon.*` -- so the label is checked as well as the host,
+# since it survives whatever shortener or tracking wrapper the href uses.
+BOOK_RETAILER_HOSTS = (
+    "amazon.",  # multiple TLDs: amazon.com, amazon.it, amazon.co.uk...
+    "amzn.to",
+    "manning.com",
+    "mng.bz",
+    "oreilly.com",
+    "packtpub.com",
+    "leanpub.com",
+    "apress.com",
+    "nostarch.com",
+    "gumroad.com",
+)
+BOOK_RETAILER_LABELS = frozenset(
+    {
+        "amazon",
+        "kindle",
+        "manning",
+        "o'reilly",
+        "oreilly",
+        "packt",
+        "leanpub",
+        "apress",
+        "no starch press",
+        "gumroad",
+    }
+)
+PURCHASE_ITEM_MAX_CHARS = 200
+
+# What may follow the label: nothing, or one short parenthetical. A sentence
+# that happens to link out ("See the paper on Amazon for...") does not match,
+# because the link text there is not the whole item's opening word.
+_TRAILING_PARENTHETICAL_RE = re.compile(r"\(.*\)\.?")
+
+
+def _is_purchase_link_item(li: Tag) -> bool:
+    anchors = li.find_all("a")
+    if len(anchors) != 1:
+        return False
+    anchor_text = anchors[0].get_text(" ", strip=True)
+    host = (urlparse(anchors[0].get("href") or "").hostname or "").lower().removeprefix("www.")
+    matches_retailer = anchor_text.strip().lower() in BOOK_RETAILER_LABELS or any(
+        host.startswith(d) if d.endswith(".") else host == d or host.endswith("." + d)
+        for d in BOOK_RETAILER_HOSTS
+    )
+    if not matches_retailer:
+        return False
+
+    full_text = li.get_text(" ", strip=True)
+    if not full_text.startswith(anchor_text) or len(full_text) > PURCHASE_ITEM_MAX_CHARS:
+        return False
+    remainder = full_text[len(anchor_text) :].strip()
+    return not remainder or bool(_TRAILING_PARENTHETICAL_RE.fullmatch(remainder))
+
 
 # Captions with no real content: "(from [1, 3, 4])", "caption...", "(from [5])"
 CAPTION_NOISE = re.compile(
@@ -484,7 +548,18 @@ class Extractor:
             self.blocks.append(Block(Kind.QUOTE, text=text, note_ids=self._drain_notes()))
 
     def _emit_list(self, node: Tag) -> None:
-        items = [self._collapse(self._inline(li)) for li in node.find_all("li", recursive=False)]
+        keep, purchase_links = [], 0
+        for li in node.find_all("li", recursive=False):
+            if _is_purchase_link_item(li):
+                purchase_links += 1
+            else:
+                keep.append(li)
+        if purchase_links:
+            self.dropped["li:book-retailer-link"] = (
+                self.dropped.get("li:book-retailer-link", 0) + purchase_links
+            )
+
+        items = [self._collapse(self._inline(li)) for li in keep]
         items = [i for i in items if i]
         if items:
             self.blocks.append(

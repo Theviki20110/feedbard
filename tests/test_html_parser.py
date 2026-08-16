@@ -256,6 +256,61 @@ def test_nested_list_items_do_not_leak_into_the_parent_list():
     assert lists[0].text.count("Primo") == 1
 
 
+def test_book_retailer_link_item_is_dropped_from_a_list():
+    # A blurb naming a page count reads, out of context, like a request to
+    # reproduce the book -- some models refuse to translate it. It never
+    # reaches the translator at all.
+    html = (
+        "<article><ul>"
+        '<li>There is a lot of discussion around reasoning.</li>'
+        '<li><a href="https://www.amazon.com/dp/xyz">Amazon</a> '
+        "(pre-order of Kindle ebook and print paperback)</li>"
+        '<li><a href="https://www.manning.com/books/xyz">Manning</a> '
+        "(complete book in early access, pre-final layout, 528 pages)</li>"
+        "</ul></article>"
+    )
+    doc = extract(html)
+    block = doc.blocks[0]
+    assert block.kind is Kind.LIST
+    assert "Amazon" not in block.text
+    assert "Manning" not in block.text
+    assert "reasoning" in block.text
+    assert doc.dropped["li:book-retailer-link"] == 2
+
+
+def test_book_retailer_link_item_is_dropped_even_behind_a_shortener():
+    # Confirmed on a live post: the href is the retailer's own short-link
+    # domain (mng.bz, amzn.to), not manning.com/amazon.* -- the label is
+    # what has to catch it.
+    html = (
+        "<article><ul>"
+        '<li><a href="https://amzn.to/4aAKiFY">Amazon</a> '
+        "(pre-order of Kindle ebook and print paperback)</li>"
+        '<li><a href="https://mng.bz/Nwr7">Manning</a> '
+        "(complete book in early access, pre-final layout, 528 pages)</li>"
+        "</ul></article>"
+    )
+    doc = extract(html)
+    assert not doc.blocks
+    assert doc.dropped["li:book-retailer-link"] == 2
+
+
+def test_a_link_list_item_with_extra_prose_is_kept():
+    # Not every list item with a link is a purchase blurb: one with a full
+    # sentence around it is real content and must reach the translator.
+    html = (
+        "<article><ul>"
+        '<li>See the paper on <a href="https://amazon.com/whitepaper">Amazon</a> '
+        "for a much longer discussion of the retrieval pipeline and its "
+        "tradeoffs versus the baseline approach described earlier in this post.</li>"
+        "</ul></article>"
+    )
+    doc = extract(html)
+    block = doc.blocks[0]
+    assert block.kind is Kind.LIST
+    assert "Amazon" in block.text
+
+
 # --------------------------------------------------------------------------
 # Visual extraction: geometry, classification, captions
 # --------------------------------------------------------------------------

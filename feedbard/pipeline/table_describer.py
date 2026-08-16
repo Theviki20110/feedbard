@@ -84,7 +84,7 @@ def describe_table(rows: list[list[str]], title: str = "", language: str = TARGE
     )
     described, elapsed = generate_response(prompt)
     logger.info("Table %s described in %.2f seconds", table_id(rows), elapsed)
-    check_usable(described, "describe_table", 0)
+    check_usable(described, "describe_table", 0, source=render_rows(shown))
     return described.strip()
 
 

@@ -322,6 +322,8 @@ Do not make them more aggressive, persuasive, or commercial than the original.
 
 Names of newsletters, publications, companies, and subscription tiers should normally remain unchanged.
 
+A short mention of a book, its retailer, its format, or its page count (for example a caption or link label such as "Manning (early access, 528 pages)") is a citation or an advertisement for the book, not a reproduction of its contents. Translate it like any other short passage. Do not refuse and do not treat a page count or "complete book" phrasing in such a mention as a request to reproduce copyrighted text.
+
 # Ambiguity and missing context
 
 Use the entire surrounding passage to resolve ambiguous terminology.

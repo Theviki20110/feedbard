@@ -82,14 +82,17 @@ class ModelRefusedError(RuntimeError):
     """
 
 
-def check_usable(text: str, stage: str, index: int) -> None:
+def check_usable(text: str, stage: str, index: int, source: str = "") -> None:
+    # `source` is diagnostic only, never validated: knowing what was SENT is
+    # what makes a refusal reproducible without re-running the whole article.
+    src_note = f" | source: {source[:200]!r}" if source else ""
     if is_effectively_empty(text):
-        raise ModelRefusedError(f"{stage} block {index}: model returned empty output")
+        raise ModelRefusedError(f"{stage} block {index}: model returned empty output{src_note}")
     match = REFUSAL_RE.search(text)
     if match:
         raise ModelRefusedError(
             f"{stage} block {index}: model returned commentary instead of content "
-            f"(matched {match.group(0)!r}): {text[:200]!r}"
+            f"(matched {match.group(0)!r}): {text[:200]!r}{src_note}"
         )
 
 
@@ -395,7 +398,7 @@ def sanitize_chunk(
     try:
         sanitized, elapsed = generate_response(prompt)
         logger.info("Sanitize chunk %d completed in %.2f seconds", index, elapsed)
-        check_usable(sanitized, "sanitize", index)
+        check_usable(sanitized, "sanitize", index, source=marked)
     except (ModelRefusedError, RuntimeError) as exc:
         logger.warning(
             "sanitize block %d: LLM pass unusable (%s); falling back to scrub only", index, exc
