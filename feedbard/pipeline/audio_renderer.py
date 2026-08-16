@@ -21,7 +21,6 @@ load_dotenv()
 TTS_PROVIDER = os.getenv("TTS_PROVIDER", "http").lower()
 TTS_BASE_URL = os.getenv("TTS_BASE_URL", "")
 WER_THRESHOLD = 0.2  # 20% WER threshold for logging warnings
-MAX_TTS_ATTEMPTS = 3
 
 WER_NORMALIZE = jiwer.Compose(
     [
@@ -36,9 +35,9 @@ WER_NORMALIZE = jiwer.Compose(
 )
 
 # Shell commands, URLs, code fences, and config blocks are structurally
-# unspeakable by TTS/ASR round-trip comparison - retrying never helps since
-# the mismatch isn't random. Skip the WER gate for these instead of burning
-# 3x TTS+ASR calls per block on a check that can never pass.
+# unspeakable by TTS/ASR round-trip comparison - the mismatch isn't a defect.
+# Skip the WER check for these instead of spending an ASR call on a check
+# that can never pass.
 CODE_LIKE_RE = re.compile(
     r"(https?://|^\s*[$#>]|```|-{1,2}\w[\w-]*=|\b\w+@\w+|::|/[\w./-]+/|\.(py|json|toml|sh|js)\b)",
     re.MULTILINE,
@@ -138,40 +137,20 @@ def generate_speech(
         save_final_audio_shard(audio_bytes, title, block_index)
         return audio_bytes
 
-    attempt = 0
-    while True:
-        audio_bytes = call_tts(text, language, voice_id)
-        transcription = generate_transcription(audio_bytes, lang=language)
+    audio_bytes = call_tts(text, language, voice_id)
+    transcription = generate_transcription(audio_bytes, lang=language)
 
-        wer = jiwer.wer(
-            text,
-            transcription,
-            reference_transform=WER_NORMALIZE,
-            hypothesis_transform=WER_NORMALIZE,
-        )
+    wer = jiwer.wer(
+        text,
+        transcription,
+        reference_transform=WER_NORMALIZE,
+        hypothesis_transform=WER_NORMALIZE,
+    )
 
-        attempt += 1
-        if wer <= WER_THRESHOLD:
-            break
-
-        if attempt >= MAX_TTS_ATTEMPTS:
-            logger.warning(
-                "High WER (%.2f%%) after %d attempts, giving up. "
-                "Reference: %r Transcription: %r Diff: %s",
-                wer * 100,
-                attempt,
-                text,
-                transcription,
-                _word_diff(text, transcription),
-            )
-            break
-
+    if wer > WER_THRESHOLD:
         logger.warning(
-            "High WER (%.2f%%) on attempt %d/%d, retrying. "
-            "Reference: %r Transcription: %r Diff: %s",
+            "High WER (%.2f%%). Reference: %r Transcription: %r Diff: %s",
             wer * 100,
-            attempt,
-            MAX_TTS_ATTEMPTS,
             text,
             transcription,
             _word_diff(text, transcription),
