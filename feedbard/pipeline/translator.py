@@ -10,12 +10,6 @@ from feedbard.pipeline.sanitizer import check_usable, is_effectively_empty
 
 TRANSLATOR_PROMPT_PATH = ASSETS_DIR / "translator_prompt.txt"
 
-# Long articles cause the model to summarize/skip content instead of
-# translating it in full. Chunking bounds each request to a size the model
-# reliably translates in its entirety, and lets us catch a broken chunk
-# immediately instead of discovering a silent mid-document drop at the end.
-MAX_CHUNK_CHARS = 6000
-
 # Per-block translated text, written right after each LLM call succeeds. If
 # the process is interrupted mid-article, restarting skips every block whose
 # shard is already on disk instead of re-billing the model for it.
