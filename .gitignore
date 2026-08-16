@@ -220,6 +220,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
-tmp
+ignore_this_folder
 .vscode
 terminal_to_debug.txt
