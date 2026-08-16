@@ -1,6 +1,6 @@
 # feedbard
 
-Polls a list of Substack RSS feeds, turns new posts into narrated audio
+Polls a list of RSS/Atom feeds, turns new posts into narrated audio
 (translated, with visuals described for TTS), and keeps track of what's
 already been processed.
 
@@ -9,9 +9,10 @@ already been processed.
 ```
 app.check_and_run()
   ├─ feeds/reader.read_feed_urls()      assets/feeds_list.txt -> feed URLs
-  ├─ feeds/reader.get_post_entries_v2() RSS -> entries (url, image_url)
+  ├─ feeds/reader.get_post_entries_v2() feed -> entries (url, title, author,
+  │                                     date, body if the feed carries one)
   ├─ feeds/store.filter_new_posts()     drop entries already seen (sqlite)
-  ├─ feeds/reader.get_feeds()           fetch full post HTML + cover art
+  ├─ feeds/reader.get_feeds()           ingestion/fetcher -> article HTML + cover
   ├─ pipeline/orchestrator.process_feeds()
   │    for each item:
   │      ├─ ingestion/html_parser.extract()          HTML -> typed blocks + visuals
@@ -26,6 +27,31 @@ app.check_and_run()
 `llm_client.py` and `asr_client.py` are the only places that talk to external
 model APIs (Anthropic / Bedrock / Ollama for LLM, a Whisper-compatible
 server for transcription-based QA in the audio renderer).
+
+## Getting the article
+
+Any feed works, because how a post's body is obtained is the only thing that
+differs between publishers, and that difference is confined to
+`ingestion/fetcher.py`. It tries three strategies in order and takes the first
+that returns a usable body:
+
+1. **Substack API** -- for `*.substack.com` hosts and for custom domains whose
+   feed says `<generator>Substack</generator>`. It is the only source that
+   returns the subtitle, the post's own cover image, and a byline as a name.
+2. **The feed itself** -- `content:encoded`, when the publisher puts the whole
+   post in the feed (Ghost, WordPress, most static-site generators). Costs no
+   request beyond the poll. A body under ~1200 characters of text is read as a
+   teaser, not an article, and falls through.
+3. **Readability over the page** -- the universal fallback for a truncated
+   feed. Metadata comes from the entry first, then the page's Open Graph tags.
+
+A strategy that raises is logged and skipped, so a publisher changing its
+markup degrades that feed to the next strategy instead of failing the run.
+Metadata is normalised on the way out (dates to ISO-8601, an absent byline to
+the publication host), so nothing downstream knows where an article came from.
+
+Adding a publisher-specific strategy means writing one function returning
+`Article | None` and putting it in `STRATEGIES` before the generic ones.
 
 ## On-disk layout
 

@@ -15,13 +15,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from substack_api import Post  # noqa: E402
-
 from feedbard.feeds.reader import (  # noqa: E402
     get_post_entries_v2,
     read_feed_urls,
     save_cover,
 )
+from feedbard.ingestion.fetcher import fetch_article  # noqa: E402
 from feedbard.paths import EPISODES_DIR, find_cover, slug  # noqa: E402
 
 
@@ -41,17 +40,19 @@ def main() -> None:
     found = 0
     for feed_url in read_feed_urls():
         for entry in get_post_entries_v2(feed_url):
-            try:
-                metadata = Post(entry["url"]).get_metadata()
-            except Exception as exc:  # noqa: BLE001 - one bad post must not stop the sweep
-                print(f"  ! {entry['url']}: {exc}")
-                continue
-
-            title = metadata.get("title") or ""
+            title = entry["title"]
             if slug(title) not in wanted:
                 continue
 
-            image_url = metadata.get("cover_image") or entry["image_url"]
+            # The feed's image is enough for most publishers; the article is
+            # fetched only for the posts that matched, and only because some
+            # sources expose a better per-post cover than the feed does.
+            image_url = entry["image_url"]
+            try:
+                image_url = fetch_article(entry).cover_image or image_url
+            except Exception as exc:  # noqa: BLE001 - one bad post must not stop the sweep
+                print(f"  ! {entry['url']}: {exc}")
+
             print(f"  {'would save' if args.dry_run else 'saving'}: {title}")
             if not args.dry_run:
                 saved = save_cover(image_url, title)

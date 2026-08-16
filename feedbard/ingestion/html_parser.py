@@ -1,5 +1,11 @@
 """
-Deterministic DOM -> IR pass into typed blocks. Tuned for Substack.
+Deterministic DOM -> IR pass into typed blocks.
+
+Input is an article-sized HTML fragment, whatever produced it: a publisher
+API, a feed's content:encoded, or a readability pass over a page (see
+`ingestion/fetcher.py`). The selectors below name the containers and the
+boilerplate of the platforms seen so far -- an unknown one still parses,
+falling back to `article`/`main` and carrying whatever widgets it had.
 
 Goal: walk the tree ONCE and produce, at the same time,
   (a) the ordered block stream, with opaque placeholders in place of visuals
@@ -32,7 +38,19 @@ SYM_OPEN, SYM_CLOSE = "\u27ea", "\u27eb"  # double angle brackets, for inline sy
 VIS_TOKEN = VIS_OPEN + "VIS:{vid}" + VIS_CLOSE
 VIS_RE = re.compile(re.escape(VIS_OPEN) + r"VIS:([0-9a-f]{10})" + re.escape(VIS_CLOSE))
 
-ARTICLE_SELECTORS = ("div.available-content", "div.body.markup", "article", "main")
+ARTICLE_SELECTORS = (
+    # Substack
+    "div.available-content",
+    "div.body.markup",
+    # Ghost / WordPress / common themes
+    "div.gh-content",
+    "div.entry-content",
+    "div.post-content",
+    "[itemprop='articleBody']",
+    # Generic, and what a readability pass leaves behind
+    "article",
+    "main",
+)
 
 # Boilerplate: discarded at the BLOCK level, never via regex on the text.
 BOILERPLATE_SELECTORS = (
@@ -46,6 +64,14 @@ BOILERPLATE_SELECTORS = (
     ".paywall",
     ".image-link-expand",  # restack / fullscreen buttons inside figures
     ".pencraft",
+    # Ghost / WordPress / common themes
+    ".sharedaddy",
+    ".post-share",
+    ".related-posts",
+    ".newsletter-signup",
+    ".wp-block-post-comments",
+    "aside",
+    "footer",
     "nav",
     "header",
     "form",

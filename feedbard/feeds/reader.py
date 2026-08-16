@@ -6,9 +6,8 @@ import feedparser
 import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
-from substack_api import Post
 
-from feedbard.ingestion.substack_fetcher import get_text_from_html
+from feedbard.ingestion.fetcher import fetch_article
 from feedbard.logger import logger
 from feedbard.paths import COVERS_DIR, cover_path, find_cover, slug
 
@@ -33,28 +32,78 @@ def _extract_og_image(post_url: str) -> str | None:
     return tag.get("content") if tag else None
 
 
+def _entry_image(item: dict) -> str | None:
+    """Artwork as the feed itself declares it, in decreasing order of intent:
+    an explicit media element, then an enclosure, then whatever the page
+    advertises to social networks."""
+    for media in item.get("media_content", []) or []:
+        if media.get("url"):
+            return media["url"]
+    for thumb in item.get("media_thumbnail", []) or []:
+        if thumb.get("url"):
+            return thumb["url"]
+    for link_obj in item.get("links", []) or []:
+        if link_obj.get("rel") == "enclosure" and link_obj.get("href"):
+            return link_obj["href"]
+    return None
+
+
+def _entry_content(item: dict) -> str:
+    """The post body as carried by the feed, if it is carried at all.
+
+    `content` (content:encoded) is the full post where a publisher offers one;
+    `summary` is a teaser far more often than not. Both are handed to the
+    fetcher, which decides on length whether what it got is the whole article.
+    """
+    for block in item.get("content", []) or []:
+        if block.get("value"):
+            return block["value"]
+    return item.get("summary") or ""
+
+
+def _entry_author(item: dict, feed_meta: dict) -> str:
+    """Per-post byline first (`dc:creator` lands in `author`), then the feed's
+    own author, then nothing -- the fetcher falls back to the host."""
+    for detail in (item.get("author_detail") or {}, feed_meta.get("author_detail") or {}):
+        name = (detail.get("name") or "").strip()
+        # feedparser puts the address in `name` when the field is bare email.
+        if name and "@" not in name:
+            return name
+    author = (item.get("author") or "").strip()
+    return "" if "@" in author else author
+
+
 def get_post_entries_v2(feed_url: str) -> list[dict]:
+    """Parse a feed into entries carrying everything the feed already knows.
+
+    Title, byline, date and (for untruncated feeds) the body all come free
+    with the poll. Passing them downstream is what lets the generic path skip
+    a per-post request that only Substack ever needed.
+    """
     r = requests.get(feed_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
     r.raise_for_status()
     feed = feedparser.parse(r.content)
+    feed_meta = feed.feed
+    generator = feed_meta.get("generator") or ""
+
     entries = []
     for item in feed.entries:
         link = item.get("link")
         if not link:
             continue
-        image_url = None
-        for media in item.get("media_content", []):
-            if media.get("url"):
-                image_url = media["url"]
-                break
-        if not image_url and item.get("links"):
-            for link_obj in item["links"]:
-                if link_obj.get("rel") == "enclosure" and link_obj.get("href"):
-                    image_url = link_obj["href"]
-                    break
-        if not image_url:
-            image_url = _extract_og_image(link)
-        entries.append({"url": link, "image_url": image_url})
+        image_url = _entry_image(item) or _extract_og_image(link)
+        entries.append(
+            {
+                "url": link,
+                "image_url": image_url,
+                "title": (item.get("title") or "").strip(),
+                "author": _entry_author(item, feed_meta),
+                "published_at": item.get("published") or item.get("updated") or "",
+                "content_html": _entry_content(item),
+                "generator": generator,
+                "feed_title": (feed_meta.get("title") or "").strip(),
+            }
+        )
     return entries
 
 
@@ -88,25 +137,14 @@ def save_cover(image_url: str, title: str) -> str | None:
     return str(dest_path)
 
 
-def _author_of(metadata: dict) -> str:
-    """Substack keeps the author in a bylines list; the post-level `author`
-    key is always null. Fall back to the publication host so the podcast
-    still groups under something meaningful rather than an empty folder."""
-    for byline in metadata.get("publishedBylines") or []:
-        name = (byline.get("name") or "").strip()
-        if name:
-            return name
-    host = urlparse(metadata.get("canonical_url") or "").hostname or ""
-    return host.split(".")[0] if host else "Unknown"
-
-
 def find_posts_by_slug(slugs: set[str]) -> dict[str, dict]:
     """Walk the configured feeds and return metadata for the wanted articles.
 
     Rendered artefacts are named by slug and carry no author or date, so
     republishing one after the fact means going back to the feed for them.
-    Stops as soon as every slug is accounted for, since the common case is
-    backfilling a handful of episodes across feeds of hundreds of posts.
+    The feed entry alone answers that -- no article body is fetched -- and the
+    sweep stops as soon as every slug is accounted for, since the common case
+    is backfilling a handful of episodes across feeds of hundreds of posts.
     """
     wanted = set(slugs)
     found: dict[str, dict] = {}
@@ -117,23 +155,16 @@ def find_posts_by_slug(slugs: set[str]) -> dict[str, dict]:
         for entry in get_post_entries_v2(feed_url):
             if not wanted:
                 break
-            try:
-                metadata = Post(entry["url"]).get_metadata()
-            except Exception:  # noqa: BLE001 - one unreachable post must not stop the sweep
-                logger.warning("metadata fetch failed for %s", entry["url"], exc_info=True)
-                continue
-
-            title = metadata.get("title") or ""
-            key = slug(title)
+            key = slug(entry["title"])
             if key not in wanted:
                 continue
 
             found[key] = {
                 "url": entry["url"],
-                "title": title,
-                "author": _author_of(metadata),
-                "published_at": metadata.get("post_date") or "",
-                "image_url": metadata.get("cover_image") or entry["image_url"],
+                "title": entry["title"],
+                "author": entry["author"] or entry["feed_title"] or "Unknown",
+                "published_at": entry["published_at"],
+                "image_url": entry["image_url"],
             }
             wanted.discard(key)
 
@@ -141,18 +172,18 @@ def find_posts_by_slug(slugs: set[str]) -> dict[str, dict]:
 
 
 def _build_feed_item(entry: dict) -> dict:
-    content, metadata = get_text_from_html(entry["url"])
-    title = metadata["title"]
-    # cover_image is the post's own artwork; the RSS enclosure and og:image
-    # are fallbacks for feeds that do not expose it.
-    image_url = metadata.get("cover_image") or entry["image_url"]
+    article = fetch_article(entry)
+    title = article.title or entry["title"]
+    # The article's own artwork beats the feed's, which is a fallback for
+    # publishers that do not expose a per-post cover.
+    image_url = article.cover_image or entry["image_url"]
     return {
         "url": entry["url"],
         "title": title,
-        "text": content,
-        "author": _author_of(metadata),
-        "subtitle": (metadata.get("subtitle") or "").strip(),
-        "published_at": metadata.get("post_date") or "",
+        "text": article.html,
+        "author": article.author,
+        "subtitle": article.subtitle,
+        "published_at": article.published_at,
         "cover_path": save_cover(image_url, title),
     }
 
