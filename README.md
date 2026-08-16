@@ -1,4 +1,4 @@
-# substack-feed
+# feedbard
 
 Polls a list of Substack RSS feeds, turns new posts into narrated audio
 (translated, with visuals described for TTS), and keeps track of what's
