@@ -1,7 +1,17 @@
 import pytest
+import requests
 
 from feedbard.ingestion import fetcher
 from feedbard.ingestion.fetcher import Article, fetch_article, is_substack
+
+
+@pytest.fixture(autouse=True)
+def raw_html_cache(monkeypatch, tmp_path):
+    # Every test in this module goes through `_get_page_html`, which writes
+    # to `raw_html_path(url)`: route it into a throwaway directory instead of
+    # the real DATA_DIR, the same way test_translator.py isolates shards.
+    monkeypatch.setattr(fetcher, "raw_html_path", lambda url: tmp_path / f"{hash(url)}.html")
+    return tmp_path
 
 
 def entry(**overrides) -> dict:
@@ -20,6 +30,17 @@ def entry(**overrides) -> dict:
 
 def body(paragraphs: int) -> str:
     return "<p>" + ("word " * 40 + "</p><p>") * paragraphs + "</p>"
+
+
+class _FakeResponse:
+    def __init__(self, status_code, text="", headers=None):
+        self.status_code = status_code
+        self.text = text
+        self.headers = headers or {}
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(str(self.status_code))
 
 
 def test_is_substack_matches_hosted_domain():
@@ -86,3 +107,53 @@ def test_exhausted_strategies_raise_rather_than_narrating_nothing(monkeypatch):
 
     with pytest.raises(RuntimeError):
         fetch_article(entry())
+
+
+# --------------------------------------------------------------------------
+# raw_html cache and 429 handling
+# --------------------------------------------------------------------------
+
+
+def test_page_fetched_once_is_served_from_cache_on_a_second_call(monkeypatch):
+    calls = []
+
+    def fake_get(url, headers, timeout):
+        calls.append(url)
+        return _FakeResponse(200, text="<html>body</html>")
+
+    monkeypatch.setattr(fetcher.requests, "get", fake_get)
+
+    first = fetcher._get_page_html("https://example.com/post")
+    second = fetcher._get_page_html("https://example.com/post")
+
+    assert first == second == "<html>body</html>"
+    assert len(calls) == 1
+
+
+def test_get_retries_on_429_and_returns_the_eventual_success(monkeypatch):
+    responses = [_FakeResponse(429, headers={"Retry-After": "0"}), _FakeResponse(200, text="ok")]
+    monkeypatch.setattr(fetcher.requests, "get", lambda url, headers, timeout: responses.pop(0))
+    monkeypatch.setattr(fetcher.time, "sleep", lambda seconds: None)
+
+    result = fetcher._get("https://example.com/post")
+
+    assert result.text == "ok"
+
+
+def test_get_raises_after_exhausting_429_retries(monkeypatch):
+    monkeypatch.setattr(
+        fetcher.requests, "get", lambda url, headers, timeout: _FakeResponse(429)
+    )
+    monkeypatch.setattr(fetcher.time, "sleep", lambda seconds: None)
+
+    with pytest.raises(requests.HTTPError):
+        fetcher._get("https://example.com/post")
+
+
+def test_host_semaphore_is_shared_per_host_not_per_url():
+    a = fetcher._host_semaphore("https://example.com/post-1")
+    b = fetcher._host_semaphore("https://example.com/post-2")
+    c = fetcher._host_semaphore("https://other.example/post-1")
+
+    assert a is b
+    assert a is not c

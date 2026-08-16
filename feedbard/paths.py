@@ -7,6 +7,7 @@ Layout, rooted at DATA_DIR:
       episodes/            finished MP3, one per article
       covers/              episode artwork, one per article
       figures/             article images, fetched for description
+      raw_html/            fetched article pages, keyed on URL
       shards/
         text/              translated text, per block
         speech/            speech-ready text, per block
@@ -17,8 +18,11 @@ Layout, rooted at DATA_DIR:
 The split follows the lifetime of the artefacts, not the stage that writes
 them. `episodes/` and `covers/` are the finished goods. `shards/` is
 resumable scratch -- deleting any of it costs money to rebuild but loses
-nothing. `figures/` sits between the two: an input cache, safe to delete,
-expensive to refetch. `post_store.sqlite3` is the only thing here that
+nothing. `figures/` and `raw_html/` sit between the two: input caches, safe
+to delete, expensive to refetch -- `raw_html/` in particular exists because a
+host that starts answering with 429 makes "expensive" into "impossible until
+it stops," so a page fetched once is never requested again. `post_store.sqlite3`
+is the only thing here that
 cannot be rebuilt from the feeds: lose it and every past post looks new
 again, so it lives beside the artefacts it gates rather than in the repo
 root, and one volume mount carries all of the pipeline's state.
@@ -42,6 +46,7 @@ That tree is a copy, not a move: DATA_DIR stays the pipeline's own state, so
 a republish never depends on what the media server has done to its library.
 """
 
+import hashlib
 import os
 from pathlib import Path
 
@@ -67,6 +72,7 @@ COVERS_DIR = DATA_DIR / "covers"
 
 # --- inputs ---------------------------------------------------------------
 FIGURES_DIR = DATA_DIR / "figures"
+RAW_HTML_DIR = DATA_DIR / "raw_html"
 
 # --- resumable intermediates ----------------------------------------------
 SHARDS_DIR = DATA_DIR / "shards"
@@ -80,6 +86,7 @@ ALL_DIRS = (
     EPISODES_DIR,
     COVERS_DIR,
     FIGURES_DIR,
+    RAW_HTML_DIR,
     TEXT_SHARDS_DIR,
     SPEECH_SHARDS_DIR,
     AUDIO_SHARDS_DIR,
@@ -124,6 +131,12 @@ def find_figure(vid: str) -> Path | None:
     for path in sorted(FIGURES_DIR.glob(f"{vid}.*")):
         return path
     return None
+
+
+def raw_html_path(url: str) -> Path:
+    """Keyed on the URL, not the article's slug: this is written before an
+    article has a title to key on, by the fetch it exists to make skippable."""
+    return RAW_HTML_DIR / f"{hashlib.sha256(url.encode('utf-8')).hexdigest()[:24]}.html"
 
 
 def text_shard_path(title: str, index: int) -> Path:

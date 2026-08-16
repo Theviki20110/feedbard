@@ -12,6 +12,9 @@ to be obtained. That difference lives here, as an ordered list of strategies:
    Costs no extra request.
 3. `_from_page` -- fetch the page and run readability over it. The universal
    fallback: works on a truncated feed, knows nothing about the publisher.
+   The fetched HTML is cached to `raw_html/` (see `feedbard.paths`) before
+   readability ever sees it, and concurrent requests to one host are capped
+   and retried on 429 -- see `_get`/`_get_page_html` below.
 
 The first strategy that both applies and returns a usable body wins; a
 strategy that raises is logged and skipped, so one publisher changing its
@@ -20,6 +23,10 @@ markup degrades that feed to the next strategy instead of failing the run.
 
 from __future__ import annotations
 
+import os
+import threading
+import time
+from collections import defaultdict
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -28,6 +35,7 @@ from bs4 import BeautifulSoup
 from readability import Document as ReadabilityDocument
 
 from feedbard.logger import logger
+from feedbard.paths import raw_html_path
 
 USER_AGENT = "Mozilla/5.0 (compatible; feedbard/1.0; +https://github.com/)"
 TIMEOUT = 30
@@ -40,6 +48,38 @@ SUBSTACK_HOSTS = (".substack.com",)
 # what separates "the whole post" from "the first paragraph and a link".
 # Two short paragraphs of text; anything under that goes to the page fetch.
 MIN_FULL_TEXT = 1200
+
+# `get_feeds` fetches a feed's entries on a shared thread pool, and every
+# entry in one feed shares a host: without a cap, a burst of new posts opens
+# that many concurrent connections to one publisher, which is what a WAF's
+# rate limit tends to key on. Kept low and configurable rather than derived
+# from the pool size, since the failure mode (429) is per-host, not global.
+PER_HOST_CONCURRENCY = int(os.getenv("PER_HOST_CONCURRENCY", "2"))
+
+# A 429 during a burst of new posts is not a reason to fail the article: a
+# short wait is cheap next to re-running the LLM stages that follow.
+MAX_429_RETRIES = 3
+
+_host_semaphores: dict[str, threading.Semaphore] = defaultdict(
+    lambda: threading.Semaphore(PER_HOST_CONCURRENCY)
+)
+_host_semaphores_lock = threading.Lock()
+
+
+def _host_semaphore(url: str) -> threading.Semaphore:
+    host = urlparse(url).hostname or ""
+    with _host_semaphores_lock:
+        return _host_semaphores[host]
+
+
+def _retry_after_seconds(response: requests.Response, attempt: int) -> float:
+    value = response.headers.get("Retry-After")
+    if value:
+        try:
+            return float(value)
+        except ValueError:
+            pass
+    return 2**attempt
 
 
 @dataclass
@@ -55,9 +95,35 @@ class Article:
 
 
 def _get(url: str) -> requests.Response:
-    r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT)
-    r.raise_for_status()
-    return r
+    with _host_semaphore(url):
+        for attempt in range(MAX_429_RETRIES + 1):
+            r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT)
+            if r.status_code != 429 or attempt == MAX_429_RETRIES:
+                r.raise_for_status()
+                return r
+            wait = _retry_after_seconds(r, attempt)
+            logger.warning(
+                "429 from %s, retrying in %.0fs (attempt %d/%d)",
+                urlparse(url).hostname,
+                wait,
+                attempt + 1,
+                MAX_429_RETRIES,
+            )
+            time.sleep(wait)
+
+
+def _get_page_html(url: str) -> str:
+    """Cached ahead of `_get`: a page fetched once is never requested again,
+    so a 429 from an earlier crash never blocks a resumed run from the pages
+    it had already fetched."""
+    cache_path = raw_html_path(url)
+    if cache_path.exists():
+        return cache_path.read_text(encoding="utf-8")
+
+    page = _get(url).text
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(page, encoding="utf-8")
+    return page
 
 
 def _text_length(html: str) -> int:
@@ -126,8 +192,7 @@ def _from_feed(entry: dict) -> Article | None:
 
 
 def _from_page(entry: dict) -> Article | None:
-    response = _get(entry["url"])
-    page = response.text
+    page = _get_page_html(entry["url"])
 
     body = ReadabilityDocument(page).summary(html_partial=True)
     if _text_length(body) < 200:
