@@ -1,6 +1,9 @@
 .git
 .github
 .venv
+.claude
+.vscode
+**/.DS_Store
 **/__pycache__
 **/*.pyc
 .pytest_cache/

@@ -4,6 +4,25 @@ Polls a list of RSS/Atom feeds, turns new posts into narrated audio
 (translated, with visuals described for TTS), and keeps track of what's
 already been processed.
 
+## Intended use
+
+A personal listening tool: it makes a private, spoken copy of articles *you*
+are already entitled to read, for your own use.
+
+Everything it produces is a derivative work of someone else's writing —
+translated, narrated, re-hosted. So:
+
+- Only add feeds whose terms allow it. `assets/feeds_list.txt` ships empty for
+  that reason; nothing is processed until you put URLs in it.
+- Paid or subscriber-only posts stay off the list unless the publisher's terms
+  say otherwise.
+- Don't redistribute the output. That includes exposing the Audiobookshelf
+  library holding it to anyone but yourself.
+- The fetcher's first strategy calls Substack's undocumented internal API. It
+  is convenient, not sanctioned; using it may breach Substack's terms.
+
+Respecting all of this is the operator's responsibility, not the tool's.
+
 ## Flow
 
 ```
@@ -89,9 +108,9 @@ Publishing copies each finished episode into `LIBRARY_DIR` (default
 
 ```
 library/
-  Sebastian Raschka/
-    Understanding Reasoning LLMs/
-      Understanding Reasoning LLMs.mp3
+  Author Name/
+    Article Title/
+      Article Title.mp3
       cover.jpg
 ```
 
@@ -126,7 +145,15 @@ uv sync
 cp .env.example .env   # fill in the values
 ```
 
-Required env vars are documented in `.env.example`.
+Required env vars are documented in `.env.example`. Then put one feed URL per
+line in `assets/feeds_list.txt` (empty by default — see **Intended use**); a
+run with no feeds does nothing.
+
+`.env` holds live credentials (model provider API keys, AWS keys). It is
+gitignored and excluded from the image build context — keep it that way. Scope
+the AWS key to the Bedrock and Polly actions the pipeline needs and nothing
+else: on a container host, anything that can talk to the Docker daemon can
+read the environment of a running container.
 
 ## Narration language
 
@@ -171,6 +198,7 @@ The repair pass can improve a block, never replace it.
 
 ```
 uv run python cron_job.py     # single run (reads assets/feeds_list.txt)
+                              # empty feed list -> nothing to do
 ```
 
 `entrypoint.sh` runs the same thing in a loop, on `CRON_INTERVAL_SECONDS`
@@ -224,3 +252,8 @@ uv run ruff check .      # lint
 uv run ruff format .     # format
 uv run pytest            # tests
 ```
+
+## License
+
+MIT — see `LICENSE`. It covers this code only, not anything the pipeline
+fetches or produces from third-party content.
