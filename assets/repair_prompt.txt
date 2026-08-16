@@ -40,7 +40,6 @@ Write in `{{TARGET_LANGUAGE}}`, matching the register of the surrounding prose.
 * Do not add facts, examples, names, numbers, or conclusions that are not already in the passage.
 * Do not remove or reword a factual claim, a number, a citation marker, or a qualification.
 * Do not summarize, expand, reorder, merge, or split sentences that are already grammatical.
-* Do not touch any `⟦VIS:xxxxxxxxxx⟧` placeholder. Copy each one character-for-character, in the same order, none added, none removed.
 * Do not introduce symbols, Markdown, brackets, or markup of any kind. The passage has already been made pronounceable; keep it that way.
 
 The repaired passage must be within a few words of the length of the one you received. A repair that changes the length noticeably is a rewrite, and a rewrite is rejected.

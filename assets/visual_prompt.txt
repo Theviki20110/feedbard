@@ -20,7 +20,7 @@ Classify the image into exactly one `klass`:
 
 If `klass` is `decorativo`, leave `description` empty.
 
-Otherwise write a single short paragraph in ITALIAN, meant to be read aloud right after the sentence that introduces the image. It must:
+Otherwise write a single short paragraph in `{{TARGET_LANGUAGE}}`, meant to be read aloud right after the sentence that introduces the image. It must:
 
 * describe what the image actually shows, not restate that "an image is shown";
 * for charts and diagrams, state the key takeaway (trend, comparison, relationship), not just axis labels;

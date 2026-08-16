@@ -2,7 +2,6 @@ from concurrent.futures import ThreadPoolExecutor
 
 from jinja2 import Template
 
-from feedbard.ingestion.html_parser import VIS_RE
 from feedbard.llm_client import generate_response
 from feedbard.logger import logger
 from feedbard.paths import ASSETS_DIR, TEXT_SHARDS_DIR, text_shard_path
@@ -41,7 +40,6 @@ def translate_chunk(chunk: str, target_language: str, index: int) -> str:
     if is_effectively_empty(chunk):
         return ""
 
-    expected = VIS_RE.findall(chunk)
     prompt = Template(TRANSLATOR_PROMPT_PATH.read_text()).render(
         SOURCE_TEXT=chunk, TARGET_LANGUAGE=target_language
     )
@@ -53,15 +51,6 @@ def translate_chunk(chunk: str, target_language: str, index: int) -> str:
     # Commentary about the task reads exactly like article prose downstream,
     # so it has to be rejected here rather than discovered in the audio.
     check_usable(translated_chunk, "translate", index)
-
-    found = VIS_RE.findall(translated_chunk)
-    if found != expected:
-        missing = [v for v in expected if v not in found]
-        extra = [v for v in found if v not in expected]
-        raise RuntimeError(
-            f"chunk {index}: expected {len(expected)} placeholders, found {len(found)}; "
-            f"missing={missing} extra={extra}"
-        )
 
     # The ⟪⟫ markers around inline code (added by the HTML parser) are left in
     # place on purpose: they tell the sanitizer stage which spans are
@@ -78,7 +67,12 @@ def _translate_block(index: int, block, target_language: str, title: str) -> Non
 def translate_blocks(
     document, title: str, target_language: str = TARGET_LANGUAGE, max_workers: int = 8
 ):
-    candidates = [(i, b) for i, b in enumerate(document.blocks) if b.text != ""]
+    # A block that already carries translated text got it from
+    # `narration.attach_descriptions`, which works in the narration language:
+    # there is nothing to translate, and doing so would paraphrase it.
+    candidates = [
+        (i, b) for i, b in enumerate(document.blocks) if b.text != "" and b.translated_text is None
+    ]
 
     loaded = 0
     todo = []

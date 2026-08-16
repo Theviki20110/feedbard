@@ -53,15 +53,6 @@ class Article:
     published_at: str = ""
     cover_image: str = ""
 
-    def as_metadata(self) -> dict:
-        return {
-            "title": self.title,
-            "author": self.author,
-            "subtitle": self.subtitle,
-            "post_date": self.published_at,
-            "cover_image": self.cover_image,
-        }
-
 
 def _get(url: str) -> requests.Response:
     r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT)

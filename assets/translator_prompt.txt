@@ -162,7 +162,6 @@ Do not translate, rewrite, normalize, or “correct” the following elements un
 * numerical measurements
 * code syntax
 * placeholders such as `{{VARIABLE}}`, `{user_id}`, `%s`, or `$MODEL_NAME`
-* opaque visual placeholders of the exact form `⟦VIS:xxxxxxxxxx⟧` (white brackets around `VIS:` followed by a 10-character hex id). These mark the position of a figure and must be copied into the output character-for-character, in the same order, with none added, removed, or merged. Never interpret them as decorative punctuation, brackets to normalize, or content to summarize away.
 
 Preserve capitalization when it is technically meaningful.
 

@@ -1,19 +1,54 @@
-from feedbard.ingestion.html_parser import extract
+from feedbard.ingestion.html_parser import Document, extract
 from feedbard.logger import logger
 from feedbard.pipeline.audio_renderer import generate_audio_from_blocks
+from feedbard.pipeline.narration import attach_descriptions
 from feedbard.pipeline.publisher import publish
 from feedbard.pipeline.sanitizer import sanitize_blocks
+from feedbard.pipeline.table_describer import describe_tables
 from feedbard.pipeline.translator import translate_blocks
 from feedbard.pipeline.visual_describer import describe_visuals
+
+
+def _log_extraction(doc: Document, title: str) -> None:
+    """What the parse kept and what it threw away.
+
+    Both are judgement calls made by selector lists that no publisher is
+    obliged to keep matching, so a run that quietly starts dropping half an
+    article should say so somewhere.
+    """
+    logger.info(
+        "[%s] extract: %d block(s), %d visual(s), %d footnote(s)",
+        title,
+        len(doc.blocks),
+        len(doc.visuals),
+        len(doc.notes),
+    )
+    if doc.dropped:
+        logger.info(
+            "[%s] extract: dropped boilerplate %s",
+            title,
+            ", ".join(f"{sel}x{n}" for sel, n in sorted(doc.dropped.items())),
+        )
+    if doc.truncated_at:
+        logger.info("[%s] extract: stopped at tail heading %r", title, doc.truncated_at)
 
 
 def process_item(item: dict) -> str:
     title = item["title"]
     logger.info("[%s] extract: parsing HTML", title)
     doc = extract(item["text"])
+    _log_extraction(doc, title)
 
     logger.info("[%s] describe_visuals", title)
     describe_visuals(doc)
+
+    logger.info("[%s] describe_tables", title)
+    describe_tables(doc, title)
+
+    # Before translation: this is what gives the figures and the tables a
+    # place in the episode instead of leaving them as silent gaps.
+    attached = attach_descriptions(doc)
+    logger.info("[%s] attach_descriptions: %d non-prose block(s) narratable", title, attached)
 
     logger.info("[%s] translate_text", title)
     translated_blocks = translate_blocks(doc, title)

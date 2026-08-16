@@ -1,10 +1,14 @@
-"""LLM3: fills in Visual.klass and Visual.description by actually looking at
-the image. Runs after extract() and before render_for_tts(), which is the
-only place those two fields are read.
+"""Vision pass: fills in Visual.klass and Visual.description by actually
+looking at the image.
+
+Runs after extract() and before `narration.attach_descriptions`, which is
+what puts the description back into the block stream so it reaches the
+episode. The description is written directly in the narration language, so
+nothing translates it afterwards.
 
 A visual that fails to fetch or to classify is treated as decorativo rather
-than aborting the item: dropping one figure's narration is fine, silently
-losing placeholder alignment (aggregator/tts's check_integrity) is not.
+than aborting the item: losing one figure's narration is better than losing
+the article it belongs to.
 """
 
 from __future__ import annotations
@@ -30,8 +34,15 @@ from feedbard.paths import (
     find_figure,
     visual_shard_path,
 )
+from feedbard.pipeline.lexicon import TARGET_LANGUAGE
 
 VISUAL_PROMPT_PATH = ASSETS_DIR / "visual_prompt.txt"
+
+# Internal taxonomy, not display text: the words stay as they are whatever the
+# narration language is. Only `decorativo` changes what happens to the visual —
+# it is the one class that never reaches the episode.
+KLASSES = ("decorativo", "illustrativo", "essenziale")
+SKIPPED_KLASS = "decorativo"
 
 _JSON_RE = re.compile(r"\{.*\}", re.S)
 
@@ -42,17 +53,26 @@ _JSON_RE = re.compile(r"\{.*\}", re.S)
 # a figure reused across two articles is fetched once.
 
 
-def load_visual_shard(vid: str) -> dict | None:
+def load_visual_shard(vid: str, language: str = TARGET_LANGUAGE) -> dict | None:
+    """A shard describing the image in another language is a miss: it would
+    put a foreign-language paragraph in the middle of the episode. Shards
+    written before the language was recorded are taken at face value."""
     path = visual_shard_path(vid)
     if not path.exists():
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("language", language) != language:
+        return None
+    return data
 
 
-def save_visual_shard(vid: str, klass: str, description: str | None) -> None:
+def save_visual_shard(
+    vid: str, klass: str, description: str | None, language: str = TARGET_LANGUAGE
+) -> None:
     VISUAL_SHARDS_DIR.mkdir(parents=True, exist_ok=True)
     visual_shard_path(vid).write_text(
-        json.dumps({"klass": klass, "description": description}), encoding="utf-8"
+        json.dumps({"klass": klass, "description": description, "language": language}),
+        encoding="utf-8",
     )
 
 
@@ -101,9 +121,9 @@ def _fetch_image(vid: str, url: str) -> tuple[bytes, str]:
     return image_bytes, media_type
 
 
-def describe_visual(v: Visual) -> None:
-    prompt = Template(open(VISUAL_PROMPT_PATH).read()).render(
-        HINT=v.hint, ALT=v.alt, CAPTION=v.caption
+def describe_visual(v: Visual, language: str = TARGET_LANGUAGE) -> None:
+    prompt = Template(VISUAL_PROMPT_PATH.read_text(encoding="utf-8")).render(
+        HINT=v.hint, ALT=v.alt, CAPTION=v.caption, TARGET_LANGUAGE=language
     )
     image_bytes, media_type = _fetch_image(v.vid, v.fetch_url)
     raw, _ = generate_vision_response(prompt, image_bytes, media_type)
@@ -111,14 +131,14 @@ def describe_visual(v: Visual) -> None:
     parsed = json.loads(match.group(0) if match else raw)
 
     klass = parsed.get("klass")
-    v.klass = klass if klass in ("decorativo", "illustrativo", "essenziale") else "decorativo"
+    v.klass = klass if klass in KLASSES else "decorativo"
     v.description = (parsed.get("description") or "").strip() or None
-    save_visual_shard(v.vid, v.klass, v.description)
+    save_visual_shard(v.vid, v.klass, v.description, language)
 
 
-def _describe_or_fallback(v: Visual) -> None:
+def _describe_or_fallback(v: Visual, language: str = TARGET_LANGUAGE) -> None:
     try:
-        describe_visual(v)
+        describe_visual(v, language)
     except Exception:
         logger.warning(
             "describe_visual failed for %s, falling back to decorativo",
@@ -128,7 +148,7 @@ def _describe_or_fallback(v: Visual) -> None:
         v.klass, v.description = "decorativo", None
 
 
-def describe_visuals(doc: Document, max_workers: int = 8) -> None:
+def describe_visuals(doc: Document, language: str = TARGET_LANGUAGE, max_workers: int = 8) -> None:
     """Mutates doc.visuals in place. Call once per document, after extract()."""
     loaded = 0
     todo = []
@@ -136,7 +156,7 @@ def describe_visuals(doc: Document, max_workers: int = 8) -> None:
         if v.hero:
             v.klass, v.description = "decorativo", None
             continue
-        shard = load_visual_shard(v.vid)
+        shard = load_visual_shard(v.vid, language)
         if shard is not None:
             v.klass, v.description = shard["klass"], shard["description"]
             loaded += 1
@@ -149,4 +169,4 @@ def describe_visuals(doc: Document, max_workers: int = 8) -> None:
         return
 
     with ThreadPoolExecutor(max_workers=min(max_workers, len(todo))) as pool:
-        list(pool.map(_describe_or_fallback, todo))
+        list(pool.map(lambda v: _describe_or_fallback(v, language), todo))

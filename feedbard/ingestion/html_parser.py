@@ -32,11 +32,11 @@ from bs4 import BeautifulSoup, NavigableString, Tag
 
 # Delimiters chosen so a downstream LLM isn't tempted to "fix" them:
 # braces and math brackets get rewritten, these don't.
-VIS_OPEN, VIS_CLOSE = "\u27e6", "\u27e7"  # white brackets
 SYM_OPEN, SYM_CLOSE = "\u27ea", "\u27eb"  # double angle brackets, for inline symbols
 
-VIS_TOKEN = VIS_OPEN + "VIS:{vid}" + VIS_CLOSE
-VIS_RE = re.compile(re.escape(VIS_OPEN) + r"VIS:([0-9a-f]{10})" + re.escape(VIS_CLOSE))
+# A visual keeps its own block in the stream rather than a placeholder inside
+# a neighbouring one: the position is already recorded by the block order, and
+# a token embedded in prose has to survive every LLM pass that touches it.
 
 ARTICLE_SELECTORS = (
     # Substack
@@ -84,6 +84,11 @@ TAIL_HEADINGS = re.compile(
     r"acknowledg|further reading|share this post|bibliografia)",
     re.I,
 )
+
+# Introduces a footnote body once it has been folded into the citing block.
+# Source-language on purpose: the translator renders it in the narration
+# language along with the rest of the block.
+NOTE_LABEL = "Note:"
 
 GENERIC_ANCHORS = frozenset(
     {
@@ -164,6 +169,10 @@ class Block:
     rows: list[list[str]] = field(default_factory=list)
     note_ids: list[str] = field(default_factory=list)
     deictic: str | None = None
+    # Narratable prose for a block that has none of its own. Filled in
+    # downstream for TABLE (by table_describer); a VISUAL's equivalent lives on
+    # the Visual, which is keyed on content and so shared between articles.
+    description: str | None = None
     translated_text: str | None = None
     # Speech-ready form of translated_text: symbols spelled out, markup gone.
     # Kept separate so a sanitizer re-run never costs a re-translation.
@@ -181,8 +190,7 @@ class Visual:
     height: int | None = None
     hint: str = "figure"  # formula | figure | banner
     hero: bool = False  # topImage: header image
-    bytes_: int | None = None
-    # filled in downstream by LLM3, not here
+    # filled in downstream by the vision pass, not here
     klass: str | None = None  # decorativo | illustrativo | essenziale
     description: str | None = None
 
@@ -194,9 +202,6 @@ class Document:
     notes: dict[str, str]
     dropped: dict[str, int] = field(default_factory=dict)
     truncated_at: str | None = None
-
-    def visual_order(self) -> list[str]:
-        return [b.vid for b in self.blocks if b.kind is Kind.VISUAL and b.vid]
 
 
 # --------------------------------------------------------------------------
@@ -278,6 +283,7 @@ class Extractor:
         for node in root.children:
             if isinstance(node, Tag):
                 self._dispatch(node)
+        self._inline_notes()
         self._reposition_visuals()
         return Document(self.blocks, self.visuals, self.notes, self.dropped, self.truncated_at)
 
@@ -429,7 +435,6 @@ class Extractor:
             height=h,
             hint=hint,
             hero=bool(attrs.get("topImage")),
-            bytes_=_as_int(attrs.get("bytes")),
         )
         self.blocks.append(Block(Kind.VISUAL, vid=vid))
 
@@ -529,6 +534,28 @@ class Extractor:
     def _drain_notes(self) -> list[str]:
         ids, self._pending_notes = self._pending_notes, []
         return ids
+
+    # -- notes ---------------------------------------------------------------
+
+    def _inline_notes(self) -> None:
+        """Fold each footnote body into the block that cites it.
+
+        The `[3]` marker is dropped at inline-serialization time because a
+        number mid-sentence wrecks the prosody, which used to leave the note
+        itself with nothing pointing at it and no place in the stream. Appending
+        the body to the citing block keeps the note where the author put it,
+        after the sentence that needs it, and costs no extra structure: the
+        block count is unchanged, so every per-block shard still lines up.
+
+        The label is written in the source language and translated along with
+        the block, so no per-language table is needed here.
+        """
+        for blk in self.blocks:
+            bodies = [self.notes[nid] for nid in blk.note_ids if self.notes.get(nid)]
+            if not bodies:
+                continue
+            head = blk.text if blk.text.endswith((".", "!", "?", ":", ";")) else blk.text + "."
+            blk.text = " ".join([head, *(f"{NOTE_LABEL} {body}" for body in bodies)]).strip()
 
     # -- repositioning -------------------------------------------------------
 

@@ -62,10 +62,6 @@ def test_plain_prose_is_untouched():
     assert scrub(text) == text
 
 
-def test_visual_placeholders_survive():
-    assert "⟦VIS:0123456789⟧" in scrub("Come mostrato qui ⟦VIS:0123456789⟧ nel grafico.")
-
-
 def test_invisible_only_block_is_empty():
     assert is_effectively_empty("​  \n")
     assert not is_effectively_empty("ciao")
@@ -205,11 +201,6 @@ def test_repair_guards_reject_a_rewrite(repaired, reason):
 def test_repair_guard_accepts_a_mend():
     mended = "se hai clonato gli script, possiamo eseguire quanto segue."
     assert repair_is_acceptable(SCRUBBED, mended) is None
-
-
-def test_repair_guard_rejects_dropped_visual_placeholder():
-    before = "Come mostrato ⟦VIS:0123456789⟧ nel grafico, il valore sale."
-    assert repair_is_acceptable(before, "Come mostrato nel grafico, il valore sale ancora.")
 
 
 def _fake_llm(reply):

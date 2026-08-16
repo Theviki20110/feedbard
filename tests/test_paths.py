@@ -40,13 +40,15 @@ def test_deliverables_are_not_mixed_with_scratch():
         paths.SPEECH_SHARDS_DIR,
         paths.AUDIO_SHARDS_DIR,
         paths.VISUAL_SHARDS_DIR,
+        paths.TABLE_SHARDS_DIR,
     ):
         assert shard_dir.parent == paths.SHARDS_DIR
 
 
-def test_figures_and_visual_shards_are_keyed_on_content_hash():
-    # Not on the title: that is what lets a figure reused across two articles
-    # be fetched and described once.
-    vid = "0123456789"
-    assert paths.figure_path(vid, ".png").stem == vid
-    assert paths.visual_shard_path(vid).stem == vid
+def test_description_shards_are_keyed_on_content_hash():
+    # Not on the title: that is what lets a figure or a table reused across two
+    # articles be fetched and described once.
+    cid = "0123456789"
+    assert paths.figure_path(cid, ".png").stem == cid
+    assert paths.visual_shard_path(cid).stem == cid
+    assert paths.table_shard_path(cid).stem == cid

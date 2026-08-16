@@ -36,6 +36,8 @@ app.check_and_run()
   │    for each item:
   │      ├─ ingestion/html_parser.extract()          HTML -> typed blocks + visuals
   │      ├─ pipeline/visual_describer.describe_visuals()  LLM vision -> classify/describe images
+  │      ├─ pipeline/table_describer.describe_tables()    LLM -> a table read as prose
+  │      ├─ pipeline/narration.attach_descriptions()      descriptions -> the block stream
   │      ├─ pipeline/translator.translate_blocks()        LLM -> translated blocks
   │      ├─ pipeline/sanitizer.sanitize_blocks()          LLM + scrub -> speakable text
   │      ├─ pipeline/audio_renderer.generate_audio_from_blocks()  TTS -> episode MP3
@@ -88,14 +90,16 @@ data/
     text/       translated text, per block     ─┐ resumable scratch: deleting
     speech/     speech-ready text, per block    │ any of it costs money to
     audio/      synthesized audio, per block    │ rebuild but loses nothing
-    visual/     image class + description       ─┘
+    visual/     image class + description       │
+    table/      spoken description, per table  ─┘
 ```
 
 Episodes, covers, and the text/speech/audio shards are all named from the
 same `paths.slug()` of the article title, so an episode pairs with its cover
-by name alone — no lookup table to keep in sync. Figures and visual shards
-are keyed on the image content hash instead, which is what lets a figure
-reused across two articles be fetched and described once.
+by name alone — no lookup table to keep in sync. Figures, visual shards and
+table shards are keyed on the content hash of what they describe instead,
+which is what lets a figure or a table reused across two articles be fetched
+and described once.
 
 `paths.py` is the single source of truth for these locations; no other module
 builds a path by hand. `scripts/migrate_layout.py` moves a pre-refactor
@@ -170,6 +174,34 @@ with no lexicon file still runs: the scrub logs a warning and falls back to
 the English spoken forms, so a symbol is narrated in the wrong language rather
 than silently dropped from a claim.
 
+## What a listener hears that they cannot see
+
+Three kinds of content in an article are not prose, and each would be a silent
+gap in the episode if it were simply skipped:
+
+- **Figures.** The vision pass (`assets/visual_prompt.txt`) classifies each
+  image as `decorativo`, `illustrativo`, or `essenziale` and, for the last
+  two, writes a short paragraph saying what it shows -- the takeaway of a
+  chart, a formula read out in words. `decorativo` covers banners, logos, and
+  header photos: those stay silent, because narrating them interrupts the
+  prose without adding anything.
+- **Tables.** A grid read cell by cell is unlistenable and a grid dropped
+  takes its numbers with it, so an LLM restates it
+  (`assets/table_prompt.txt`): small tables are read out in full, larger ones
+  become the comparison they make plus the values that matter. If that call
+  fails, the rows are read out flatly rather than lost.
+- **Footnotes.** The `[3]` marker is stripped mid-sentence -- a number there
+  wrecks the prosody -- and the note's body is appended to the paragraph that
+  cites it, so it is heard where the author put it.
+
+Descriptions are written directly in `TARGET_LANGUAGE`, so nothing translates
+them afterwards; the sanitizer still runs over them, since a described formula
+arrives full of symbols. `pipeline/narration.py` is what writes each
+description back into the block the parser emitted for it, which is what fixes
+its position in the episode. Both kinds of description are cached in
+`shards/` by content hash, so an interrupted run never pays for the same
+figure or table twice.
+
 ## Links
 
 A read-aloud URL is a minute of spelled-out path segments a listener cannot
@@ -189,9 +221,9 @@ Step 3 is deterministic, so it cannot mend prose: `"cloned the scripts from,
 we can run"` is grammatical nonsense in any language a regex could patch. When
 a block reaches it having skipped or failed the LLM pass *and* it contained a
 link, one small repair call fixes the connective tissue
-(`assets/repair_prompt.txt`). That call is accepted only if the result keeps
-every `⟦VIS:⟧` placeholder, introduces no link, is not a refusal, and stays
-within 15% of the original length -- otherwise the unrepaired text is kept.
+(`assets/repair_prompt.txt`). That call is accepted only if the result
+introduces no link, is not a refusal, and stays within 15% of the original
+length -- otherwise the unrepaired text is kept.
 The repair pass can improve a block, never replace it.
 
 ## Running

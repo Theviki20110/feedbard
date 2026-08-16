@@ -20,7 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from jinja2 import Template
 
-from feedbard.ingestion.html_parser import SYM_CLOSE, SYM_OPEN, VIS_RE
+from feedbard.ingestion.html_parser import SYM_CLOSE, SYM_OPEN
 from feedbard.llm_client import generate_response
 from feedbard.logger import logger
 from feedbard.paths import ASSETS_DIR, SPEECH_SHARDS_DIR, speech_shard_path
@@ -132,7 +132,7 @@ LITERAL_ESCAPE_RE = re.compile(r"\\+[nrt]")
 # speech engine. Markdown links are handled earlier by MD_LINK_RE, which keeps
 # the label and drops only the target.
 URL_RE = re.compile(
-    r"[ \t]*<?(?:https?://|ftp://|www\.)[^\s<>\"'⟦⟧]*[^\s<>\"'.,;:!?)\]}⟦⟧]>?[ \t]*\.?",
+    r"[ \t]*<?(?:https?://|ftp://|www\.)[^\s<>\"']*[^\s<>\"'.,;:!?)\]}]>?[ \t]*\.?",
     re.I,
 )
 
@@ -309,17 +309,15 @@ def repair_is_acceptable(before: str, after: str) -> str | None:
     """Reject a repair that did more than mend punctuation.
 
     Returns the reason to reject, or None to accept. The repair pass is asked
-    for a surgical edit, so anything that changes the size, the placeholders,
-    or the symbol inventory of the passage is the model rewriting instead of
-    mending -- and the unrepaired passage, awkward as it reads, still carries
-    the author's content.
+    for a surgical edit, so anything that changes the size or the symbol
+    inventory of the passage is the model rewriting instead of mending -- and
+    the unrepaired passage, awkward as it reads, still carries the author's
+    content.
     """
     if is_effectively_empty(after):
         return "empty output"
     if REFUSAL_RE.search(after):
         return "commentary instead of content"
-    if VIS_RE.findall(after) != VIS_RE.findall(before):
-        return "visual placeholders changed"
     if URL_RE.search(after) or LINK_MARKER_RE.search(after):
         return "reintroduced a link"
     if len(after) > len(before) * (1 + REPAIR_LENGTH_TOLERANCE):
@@ -387,7 +385,6 @@ def sanitize_chunk(
     if not NEEDS_LLM_RE.search(marked):
         return _scrub_only(marked, index, target_language, title, had_links)
 
-    expected = VIS_RE.findall(marked)
     prompt = Template(SANITIZER_PROMPT_PATH.read_text()).render(
         SOURCE_TEXT=marked,
         TARGET_LANGUAGE=target_language,
@@ -399,13 +396,6 @@ def sanitize_chunk(
         sanitized, elapsed = generate_response(prompt)
         logger.info("Sanitize chunk %d completed in %.2f seconds", index, elapsed)
         check_usable(sanitized, "sanitize", index)
-
-        found = VIS_RE.findall(sanitized)
-        if found != expected:
-            raise ModelRefusedError(
-                f"sanitize block {index}: visual placeholders changed, "
-                f"expected {expected}, found {found}"
-            )
     except (ModelRefusedError, RuntimeError) as exc:
         logger.warning(
             "sanitize block %d: LLM pass unusable (%s); falling back to scrub only", index, exc
