@@ -1,5 +1,6 @@
 import os
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from urllib.parse import urlparse
 
 import feedparser
@@ -61,6 +62,20 @@ def _entry_content(item: dict) -> str:
     return item.get("summary") or ""
 
 
+def _entry_published(item: dict) -> str:
+    """ISO-8601, whatever the feed used.
+
+    RSS dates are RFC-822 (`Tue, 12 Aug 2025 ...`) and Atom's are ISO, but
+    every consumer downstream -- the ID3 year, the library metadata -- reads
+    the string positionally. feedparser has already parsed both into a struct,
+    so normalising costs nothing and keeps that assumption true.
+    """
+    parsed = item.get("published_parsed") or item.get("updated_parsed")
+    if parsed:
+        return datetime(*parsed[:6], tzinfo=UTC).isoformat()
+    return item.get("published") or item.get("updated") or ""
+
+
 def _entry_author(item: dict, feed_meta: dict) -> str:
     """Per-post byline first (`dc:creator` lands in `author`), then the feed's
     own author, then nothing -- the fetcher falls back to the host."""
@@ -91,14 +106,16 @@ def get_post_entries_v2(feed_url: str) -> list[dict]:
         link = item.get("link")
         if not link:
             continue
-        image_url = _entry_image(item) or _extract_og_image(link)
+        # Only what the feed declares: an og:image lookup is a page fetch, and
+        # at this point most entries are about to be dropped as already seen.
+        image_url = _entry_image(item)
         entries.append(
             {
                 "url": link,
                 "image_url": image_url,
                 "title": (item.get("title") or "").strip(),
                 "author": _entry_author(item, feed_meta),
-                "published_at": item.get("published") or item.get("updated") or "",
+                "published_at": _entry_published(item),
                 "content_html": _entry_content(item),
                 "generator": generator,
                 "feed_title": (feed_meta.get("title") or "").strip(),
@@ -175,8 +192,9 @@ def _build_feed_item(entry: dict) -> dict:
     article = fetch_article(entry)
     title = article.title or entry["title"]
     # The article's own artwork beats the feed's, which is a fallback for
-    # publishers that do not expose a per-post cover.
-    image_url = article.cover_image or entry["image_url"]
+    # publishers that do not expose a per-post cover. og:image is the last
+    # resort, and the only one that costs a request of its own.
+    image_url = article.cover_image or entry["image_url"] or _extract_og_image(entry["url"])
     return {
         "url": entry["url"],
         "title": title,
