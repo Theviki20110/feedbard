@@ -10,11 +10,13 @@ from dotenv import load_dotenv
 
 from feedbard.ingestion.fetcher import fetch_article
 from feedbard.logger import logger
-from feedbard.paths import COVERS_DIR, cover_path, find_cover, slug
+from feedbard.paths import COVERS_DIR, DATA_DIR, cover_path, find_cover, slug
 
 load_dotenv()
 
-FEEDS_LIST_PATH = os.environ["FEEDS_LIST_PATH"]
+# Defaults into DATA_DIR so the list lives on the mounted volume, where a
+# container user can edit it; the repo copy is only a seed.
+FEEDS_LIST_PATH = os.getenv("FEEDS_LIST_PATH") or str(DATA_DIR / "feeds_list.txt")
 
 
 def read_feed_urls(path: str = FEEDS_LIST_PATH) -> list[str]:

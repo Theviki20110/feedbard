@@ -176,6 +176,46 @@ uv run python cron_job.py     # single run (reads assets/feeds_list.txt)
 `entrypoint.sh` runs the same thing in a loop, on `CRON_INTERVAL_SECONDS`
 (used by the Docker image, see `Dockerfile` / `docker-compose.yml`).
 
+## Container
+
+`ghcr.io/theviki20110/feedbard:latest`, built for `linux/amd64` and
+`linux/arm64` by `.github/workflows/docker-publish.yml` on every push to
+`main`. Two volumes, matching the split above: `/app/data` for the pipeline's
+state, `/app/library` for the Audiobookshelf book library.
+
+```
+docker run -d --name feedbard \
+  -e LLM_PROVIDER=bedrock -e MODEL_ID=... \
+  -e AWS_ACCESS_KEY_ID=... -e AWS_SECRET_ACCESS_KEY=... -e AWS_REGION=us-east-1 \
+  -e TTS_PROVIDER=polly -e TARGET_LANGUAGE=Italian \
+  -v /mnt/user/appdata/feedbard:/app/data \
+  -v /mnt/user/media/audiobooks/feedbard:/app/library \
+  ghcr.io/theviki20110/feedbard:latest
+```
+
+The feed list is configuration, so it lives on the data volume rather than in
+the image: on first start the entrypoint copies `assets/feeds_list.txt` to
+`$DATA_DIR/feeds_list.txt` and never touches it again, so editing it from the
+host survives an image update.
+
+Credentials come from env vars only — `AWS_PROFILE` names a profile in a
+`~/.aws` the container does not have, so Bedrock and Polly need
+`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` instead.
+
+Files are written as `PUID:PGID` (default `99:100`, the Unraid convention)
+under `UMASK`, so the media server can read the library without running as
+root. A failing run logs and is retried on the next tick rather than killing
+the container: a feed or model error is usually transient.
+
+### Unraid
+
+The Community Applications template lives in its own templates repository, not
+here. What it has to set: the two paths above (Library pointing at the same
+share added in Audiobookshelf as a **Book** library), `LLM_PROVIDER` +
+`MODEL_ID`, the provider credentials, `TTS_PROVIDER`, `TARGET_LANGUAGE`, and
+optionally `CRON_INTERVAL_SECONDS`, `PUID`, `PGID`, `UMASK`. Everything else
+has a working default in the image.
+
 ## Development
 
 ```

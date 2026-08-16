@@ -1,5 +1,7 @@
 services:
   feedbard:
+    image: ghcr.io/theviki20110/feedbard:latest
+    # Local edits win over the published image when you run `--build`.
     build: .
     env_file: .env
     volumes:

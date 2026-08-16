@@ -1,4 +1,5 @@
 .git
+.github
 .venv
 **/__pycache__
 **/*.pyc
@@ -10,4 +11,4 @@ images/
 tmp/
 data/
 library/
-scripts/
+tests/

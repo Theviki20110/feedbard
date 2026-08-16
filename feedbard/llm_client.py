@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-MODEL_ID = os.environ["MODEL_ID"]
+MODEL_ID = os.getenv("MODEL_ID", "")
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").lower()
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
@@ -18,6 +18,17 @@ BEDROCK_RETRY_CONFIG = Config(retries={"max_attempts": 10, "mode": "adaptive"})
 
 _anthropic_client: anthropic.Anthropic | None = None
 _bedrock_client = None
+
+
+def _require_model_id() -> None:
+    """Checked at call time rather than import time so a misconfigured
+    container fails with an actionable message instead of a KeyError in a
+    module nothing has asked to use yet."""
+    if not MODEL_ID:
+        raise RuntimeError(
+            f"MODEL_ID is not set; it must name a model for LLM_PROVIDER={LLM_PROVIDER!r} "
+            "(Bedrock inference profile ARN, Anthropic model name, or Ollama tag)"
+        )
 
 
 def _get_anthropic_client() -> anthropic.Anthropic:
@@ -78,6 +89,7 @@ def _generate_with_ollama(prompt: str, image_bytes: bytes | None = None) -> str:
 
 
 def generate_response(prompt: str) -> tuple[str, float]:
+    _require_model_id()
     start = time.time()
     if LLM_PROVIDER == "ollama":
         text = _generate_with_ollama(prompt)
@@ -107,6 +119,7 @@ def generate_response(prompt: str) -> tuple[str, float]:
 
 
 def generate_vision_response(prompt: str, image_bytes: bytes, media_type: str) -> tuple[str, float]:
+    _require_model_id()
     start = time.time()
     if LLM_PROVIDER == "ollama":
         text = _generate_with_ollama(prompt, image_bytes)

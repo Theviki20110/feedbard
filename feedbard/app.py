@@ -1,5 +1,3 @@
-import os
-
 from dotenv import load_dotenv
 
 from feedbard.feeds.reader import get_feeds, get_post_entries_v2, read_feed_urls
@@ -9,16 +7,10 @@ from feedbard.pipeline.orchestrator import process_feeds
 
 load_dotenv()
 
-# TEMP: process only 1st feed. Set to false in .env to restore full run.
-ONLY_FIRST_FEED = os.environ["ONLY_FIRST_FEED"].lower() == "true"
-
 
 def check_and_run() -> None:
     init_db()
-    feed_urls = read_feed_urls()
-    if ONLY_FIRST_FEED:
-        feed_urls = feed_urls[:1]
-    for feed_url in feed_urls:
+    for feed_url in read_feed_urls():
         entries = get_post_entries_v2(feed_url)
         new_urls = set(filter_new_posts(feed_url, [e["url"] for e in entries]))
         new_entries = [e for e in entries if e["url"] in new_urls]
