@@ -6,7 +6,7 @@ what puts the description back into the block stream so it reaches the
 episode. The description is written directly in the narration language, so
 nothing translates it afterwards.
 
-A visual that fails to fetch or to classify is treated as decorativo rather
+A visual that fails to fetch or to classify is treated as decorative rather
 than aborting the item: losing one figure's narration is better than losing
 the article it belongs to.
 """
@@ -24,6 +24,7 @@ from jinja2 import Template
 from PIL import Image
 
 from feedbard.ingestion.html_parser import Document, Visual
+from feedbard.language import TARGET_LANGUAGE
 from feedbard.llm_client import generate_vision_response
 from feedbard.logger import logger
 from feedbard.paths import (
@@ -34,15 +35,35 @@ from feedbard.paths import (
     find_figure,
     visual_shard_path,
 )
-from feedbard.pipeline.lexicon import TARGET_LANGUAGE
 
 VISUAL_PROMPT_PATH = ASSETS_DIR / "visual_prompt.txt"
 
-# Internal taxonomy, not display text: the words stay as they are whatever the
-# narration language is. Only `decorativo` changes what happens to the visual —
-# it is the one class that never reaches the episode.
-KLASSES = ("decorativo", "illustrativo", "essenziale")
-SKIPPED_KLASS = "decorativo"
+# Internal taxonomy, not display text: nothing here is ever narrated, so these
+# are code identifiers and stay in the language the code is written in. They
+# used to be Italian, which read as a narration-language choice the pipeline
+# was not entitled to make -- a Japanese episode was still asking the vision
+# model to answer `decorativo`.
+#
+# Only `decorative` changes what happens to the visual: it is the one class
+# that never reaches the episode.
+KLASSES = ("decorative", "illustrative", "essential")
+SKIPPED_KLASS = "decorative"
+
+# Shards written before the rename. Mapped on read rather than invalidated:
+# the class is the same judgement under a different name, and re-deriving it
+# would re-bill the vision model for every figure already on disk.
+LEGACY_KLASSES = {
+    "decorativo": "decorative",
+    "illustrativo": "illustrative",
+    "essenziale": "essential",
+}
+
+
+def normalize_klass(klass: str | None) -> str:
+    """Any recorded or returned class -> one of KLASSES, defaulting to skip."""
+    klass = LEGACY_KLASSES.get(klass or "", klass or "")
+    return klass if klass in KLASSES else SKIPPED_KLASS
+
 
 _JSON_RE = re.compile(r"\{.*\}", re.S)
 
@@ -130,8 +151,7 @@ def describe_visual(v: Visual, language: str = TARGET_LANGUAGE) -> None:
     match = _JSON_RE.search(raw)
     parsed = json.loads(match.group(0) if match else raw)
 
-    klass = parsed.get("klass")
-    v.klass = klass if klass in KLASSES else "decorativo"
+    v.klass = normalize_klass(parsed.get("klass"))
     v.description = (parsed.get("description") or "").strip() or None
     save_visual_shard(v.vid, v.klass, v.description, language)
 
@@ -141,11 +161,12 @@ def _describe_or_fallback(v: Visual, language: str = TARGET_LANGUAGE) -> None:
         describe_visual(v, language)
     except Exception:
         logger.warning(
-            "describe_visual failed for %s, falling back to decorativo",
+            "describe_visual failed for %s, falling back to %s",
             v.fetch_url,
+            SKIPPED_KLASS,
             exc_info=True,
         )
-        v.klass, v.description = "decorativo", None
+        v.klass, v.description = SKIPPED_KLASS, None
 
 
 def describe_visuals(doc: Document, language: str = TARGET_LANGUAGE, max_workers: int = 8) -> None:
@@ -154,11 +175,11 @@ def describe_visuals(doc: Document, language: str = TARGET_LANGUAGE, max_workers
     todo = []
     for v in doc.visuals.values():
         if v.hero:
-            v.klass, v.description = "decorativo", None
+            v.klass, v.description = SKIPPED_KLASS, None
             continue
         shard = load_visual_shard(v.vid, language)
         if shard is not None:
-            v.klass, v.description = shard["klass"], shard["description"]
+            v.klass, v.description = normalize_klass(shard["klass"]), shard["description"]
             loaded += 1
         else:
             todo.append(v)
