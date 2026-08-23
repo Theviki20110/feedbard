@@ -1,6 +1,5 @@
 import difflib
 import os
-import re
 
 import boto3
 import jiwer
@@ -8,6 +7,7 @@ import requests
 from dotenv import load_dotenv
 
 from feedbard.asr_client import generate_transcription
+from feedbard.language import LANGUAGE_CODE, LANGUAGE_NAME, LANGUAGE_TAG
 from feedbard.logger import logger
 from feedbard.paths import (
     AUDIO_SHARDS_DIR,
@@ -24,7 +24,6 @@ WER_THRESHOLD = 0.2  # 20% WER threshold for logging warnings
 
 WER_NORMALIZE = jiwer.Compose(
     [
-        jiwer.SubstituteRegexes({r"[_=<>|`]": " ", r"\s+": " "}),
         jiwer.ToLowerCase(),
         jiwer.RemovePunctuation(),
         jiwer.RemoveMultipleSpaces(),
@@ -34,31 +33,40 @@ WER_NORMALIZE = jiwer.Compose(
     ]
 )
 
-# Shell commands, URLs, code fences, and config blocks are structurally
-# unspeakable by TTS/ASR round-trip comparison - the mismatch isn't a defect.
-# Skip the WER check for these instead of spending an ASR call on a check
-# that can never pass.
-CODE_LIKE_RE = re.compile(
-    r"(https?://|^\s*[$#>]|```|-{1,2}\w[\w-]*=|\b\w+@\w+|::|/[\w./-]+/|\.(py|json|toml|sh|js)\b)",
-    re.MULTILINE,
-)
-
-
-def _looks_like_code(text: str) -> bool:
-    return bool(CODE_LIKE_RE.search(text))
-
-
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
-POLLY_VOICE_ID = os.getenv("POLLY_VOICE_ID", "Bianca")
 POLLY_ENGINE = os.getenv("POLLY_ENGINE", "generative")
-# Polly wants a BCP-47 code ("it-IT"); the HTTP TTS server and the ASR QA step
-# below both want the bare short code ("it"). Neither is derivable from
-# TARGET_LANGUAGE ("Italian") without a name->code table, so an operator
-# narrating in another language sets these alongside it and POLLY_VOICE_ID,
-# same as the README's "Narration language" section already says to do.
-POLLY_LANGUAGE_CODE = os.getenv("POLLY_LANGUAGE_CODE", "it-IT")
-TTS_LANGUAGE_CODE = os.getenv("TTS_LANGUAGE_CODE", "it")
+
+# Polly wants a BCP-47 tag ("it-IT"); the HTTP TTS server and the ASR QA step
+# below both want the bare short code ("it"). Both are derived from
+# TARGET_LANGUAGE by `feedbard.language`, so changing the narration language
+# moves them with it. The overrides remain for the cases derivation cannot
+# cover: a regional variant the tag does not carry, or a provider that names
+# a code differently.
+POLLY_LANGUAGE_CODE = os.getenv("POLLY_LANGUAGE_CODE") or LANGUAGE_TAG
+TTS_LANGUAGE_CODE = os.getenv("TTS_LANGUAGE_CODE") or LANGUAGE_CODE
+
+# A voice is an identity, not a language: nothing derives "which voice" from
+# "which language", so these stay explicit. The defaults are Italian, which is
+# the one thing here that cannot follow TARGET_LANGUAGE on its own -- so an
+# operator who moved the language and forgot the voice gets told, rather than
+# an episode read in the right words with the wrong accent.
+_DEFAULT_VOICE_LANGUAGE = "Italian"
+POLLY_VOICE_ID = os.getenv("POLLY_VOICE_ID", "Bianca")
 TTS_VOICE_ID = os.getenv("TTS_VOICE_ID", "Leonardo.wav")
+
+if LANGUAGE_NAME != _DEFAULT_VOICE_LANGUAGE and not (
+    os.getenv("POLLY_VOICE_ID") if TTS_PROVIDER == "polly" else os.getenv("TTS_VOICE_ID")
+):
+    logger.warning(
+        "audio_renderer: narrating in %s but TTS_PROVIDER=%s is still using its default "
+        "%s voice (%s). Set %s to a voice for %s.",
+        LANGUAGE_NAME,
+        TTS_PROVIDER,
+        _DEFAULT_VOICE_LANGUAGE,
+        POLLY_VOICE_ID if TTS_PROVIDER == "polly" else TTS_VOICE_ID,
+        "POLLY_VOICE_ID" if TTS_PROVIDER == "polly" else "TTS_VOICE_ID",
+        LANGUAGE_NAME,
+    )
 
 _polly_client = None
 
@@ -138,11 +146,6 @@ def generate_speech(
     if cached is not None:
         logger.info("[%s] block %d: resumed audio from shard", title, block_index)
         return cached
-
-    if _looks_like_code(text):
-        audio_bytes = call_tts(text, voice_id)
-        save_final_audio_shard(audio_bytes, title, block_index)
-        return audio_bytes
 
     audio_bytes = call_tts(text, voice_id)
     transcription = generate_transcription(audio_bytes, lang=TTS_LANGUAGE_CODE)

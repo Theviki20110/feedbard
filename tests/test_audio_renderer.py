@@ -5,7 +5,6 @@ import pytest
 
 from feedbard.pipeline import audio_renderer
 from feedbard.pipeline.audio_renderer import (
-    _looks_like_code,
     call_tts,
     call_tts_http,
     call_tts_polly,
@@ -108,30 +107,6 @@ def test_call_tts_unsupported_provider_raises(monkeypatch):
         call_tts("testo")
 
 
-# --------------------------------------------------------------------------
-# _looks_like_code
-# --------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "vedi https://example.com/docs",
-        "$ uv run pytest",
-        "```python\nprint(1)\n```",
-        "--model=north-mini",
-        "contattami a someone@example.com",
-        "il file è in /usr/local/bin/feedbard",
-        "modifica config.toml",
-    ],
-)
-def test_looks_like_code_true_for_code_shaped_text(text):
-    assert _looks_like_code(text)
-
-
-def test_looks_like_code_false_for_plain_prose():
-    assert not _looks_like_code("Il modello raggiunge il 92% di accuratezza sul benchmark.")
-
 
 # --------------------------------------------------------------------------
 # generate_speech
@@ -154,15 +129,6 @@ def test_resumed_from_shard_skips_tts_entirely(monkeypatch, shard):
 
     out = generate_speech("qualsiasi testo", "Articolo", 0)
     assert out == b"cached-audio"
-
-
-def test_code_like_text_skips_the_wer_check(monkeypatch, shard):
-    monkeypatch.setattr(audio_renderer, "call_tts", lambda text, voice_id: b"audio")
-    monkeypatch.setattr(audio_renderer, "generate_transcription", _unreachable)
-
-    out = generate_speech("uv run pytest --model=x", "Articolo", 0)
-    assert out == b"audio"
-    assert (shard / "Articolo_0.wav").read_bytes() == b"audio"
 
 
 def test_matching_transcription_logs_no_warning(monkeypatch, shard, caplog):
