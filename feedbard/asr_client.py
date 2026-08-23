@@ -3,6 +3,8 @@ import os
 import requests
 from dotenv import load_dotenv
 
+from feedbard.language import LANGUAGE_CODE
+
 load_dotenv()
 
 # Read, not required: transcription is a QA step some deployments never
@@ -10,7 +12,7 @@ load_dotenv()
 ASR_BASE_URL = os.getenv("ASR_BASE_URL", "")
 
 
-def generate_transcription(audio_bytes: bytes, lang: str = "it") -> str:
+def generate_transcription(audio_bytes: bytes, lang: str = LANGUAGE_CODE) -> str:
     if not ASR_BASE_URL:
         raise RuntimeError("ASR_BASE_URL is not set; point it at a Whisper-compatible server")
     resp = requests.post(
