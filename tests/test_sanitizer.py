@@ -1,17 +1,17 @@
+"""The speech pass: check, ask, ask again, then delete what is left.
+
+Only blocks that fail the allowlist reach the model at all, so the cheapest
+thing this stage does is nothing. What matters here is the loop around the
+call: that a clean answer is taken, a dirty one is challenged once, and a
+model that never produces speakable text cannot put a symbol on the wire.
+"""
+
 import pytest
 
+from feedbard.ingestion.html_parser import Block, Document, Kind
 from feedbard.pipeline import sanitizer
-from feedbard.pipeline.lexicon import load_lexicon
-from feedbard.pipeline.sanitizer import (
-    NEEDS_LLM_RE,
-    ModelRefusedError,
-    check_usable,
-    is_effectively_empty,
-    mark_urls,
-    repair_is_acceptable,
-    sanitize_chunk,
-    scrub,
-)
+from feedbard.pipeline.sanitizer import is_effectively_empty, sanitize_blocks, sanitize_chunk
+from feedbard.pipeline.speakable import unspeakable_chars
 
 # Every string below was taken from a shard that actually reached the speech
 # engine, so these are regressions, not hypotheticals.
@@ -28,261 +28,150 @@ REAL_SHARDS = [
     "➜  uv run bench.py --model north-mini",
 ]
 
-UNSPEAKABLE = set("⟪⟫<>{}|\\`#➜") | set("αβγδθλμπσωΣΠ∇∂≤≥×÷→") | set("₀₁₂₃⁰¹²³")
+
+@pytest.fixture
+def shards(monkeypatch, tmp_path):
+    monkeypatch.setattr(sanitizer, "SPEECH_SHARDS_DIR", tmp_path)
+    monkeypatch.setattr(sanitizer, "speech_shard_path", lambda t, i: tmp_path / f"{t}_{i}.txt")
 
 
-@pytest.mark.parametrize("text", REAL_SHARDS)
-def test_scrub_leaves_nothing_unspeakable(text):
-    assert not (set(scrub(text)) & UNSPEAKABLE)
+def _model(*replies):
+    """A model returning `replies` in order, recording the prompts it saw."""
+    calls, it = [], iter(replies)
+
+    def generate_response(prompt):
+        calls.append(prompt)
+        return next(it), 0.0
+
+    generate_response.calls = calls
+    return generate_response
 
 
-@pytest.mark.parametrize("text", REAL_SHARDS)
-def test_scrub_is_idempotent(text):
-    once = scrub(text)
-    assert scrub(once) == once
+# --- the cheap path ---------------------------------------------------------
 
 
-def test_greek_and_subscripts_become_words():
-    out = scrub("I pesi σ_1, σ_2 e σ_n con θ, x² e Σ_i")
-    assert "sigma 1" in out and "sigma n" in out
-    assert "theta" in out and "sommatoria" in out
+def test_prose_that_is_already_speech_never_reaches_the_model(monkeypatch):
+    monkeypatch.setattr(sanitizer, "generate_response", _model())
+    text = "Il modello raggiunge il 92 per cento di accuratezza sul benchmark."
+    assert sanitize_chunk(text, 0) == text
 
 
-def test_unicode_subscripts_are_spaced():
-    # "sigma1" would be pronounced as one nonsense word.
-    assert scrub("σ₁") == "sigma 1"
-
-
-def test_snake_case_identifiers_survive():
-    # The subscript rule must not fire inside `reasoning_effort`.
-    assert "reasoning_effort" in scrub("il parametro reasoning_effort è attivo")
-
-
-def test_plain_prose_is_untouched():
-    text = "Il modello di ragionamento produce output migliori, ma più lenti."
-    assert scrub(text) == text
-
-
-def test_invisible_only_block_is_empty():
+def test_an_empty_block_never_reaches_the_model(monkeypatch):
+    monkeypatch.setattr(sanitizer, "generate_response", _model())
+    assert sanitize_chunk("​  \n", 0) == ""
     assert is_effectively_empty("​  \n")
     assert not is_effectively_empty("ciao")
 
 
-@pytest.mark.parametrize(
-    "refusal",
-    [
-        "I'm ready to translate. However, the source content appears to be empty.",
-        "Non posso tradurre un intero libro protetto da copyright (528 pagine).",
-        "I understand the instructions completely. Please provide the text.",
-    ],
-)
-def test_refusals_are_rejected(refusal):
-    with pytest.raises(ModelRefusedError):
-        check_usable(refusal, "translate", 0)
+def test_invisible_characters_are_deleted_rather_than_described(monkeypatch):
+    # Nothing for a model to decide: they make no sound in any language.
+    monkeypatch.setattr(sanitizer, "generate_response", _model())
+    assert sanitize_chunk("il mo­dello ​funziona", 0) == "il modello funziona"
 
 
-def test_real_content_passes():
-    check_usable("Il modello raggiunge il 92% di accuratezza sul benchmark.", "translate", 0)
+# --- the loop ---------------------------------------------------------------
 
 
-# --- URLs ------------------------------------------------------------------
+@pytest.mark.parametrize("text", REAL_SHARDS)
+def test_a_speakable_answer_is_taken_on_the_first_call(monkeypatch, text):
+    clean = "Il comando avvia il modello locale."
+    model = _model(clean)
+    monkeypatch.setattr(sanitizer, "generate_response", model)
 
-# Every one of these reached the speech engine and was spelled out aloud.
-URL_SHARDS = [
-    "Uno gennaio, Deep Delta Learning, https://arxiv.org/abs/2601.00417",
-    "il codice è disponibile qui: https://github.com/rasbt/local-coding-agent-evals",
-    "Ollama fornisce un'integrazione: https://docs.ollama.com/integrations/claude-code.",
-    "se hai clonato gli script da https://github.com/rasbt/x, esegui quanto segue",
-    "vedi la documentazione (https://example.com/docs) per i dettagli",
-    "il sito www.example.com riporta i benchmark",
-]
+    assert sanitize_chunk(text, 0) == clean
+    assert len(model.calls) == 1
 
 
-@pytest.mark.parametrize("text", URL_SHARDS)
-def test_urls_are_removed(text):
-    out = scrub(text)
-    assert "http" not in out and "www." not in out and "://" not in out
-    assert ".com" not in out and ".org" not in out
+def test_a_dirty_answer_is_challenged_once_and_the_retry_is_kept(monkeypatch):
+    model = _model("ancora ⟪sporco⟫", "adesso pulito.")
+    monkeypatch.setattr(sanitizer, "generate_response", model)
+
+    assert sanitize_chunk("usa ⟪ollama⟫", 0) == "adesso pulito."
+    assert len(model.calls) == 2
 
 
-def test_url_removal_keeps_the_sentence_readable():
-    out = scrub("il codice è disponibile qui: https://github.com/rasbt/evals")
-    assert out == "il codice è disponibile qui."
-    assert "  " not in out
+def test_the_retry_is_told_what_the_previous_answer_left_behind(monkeypatch):
+    model = _model("il codice è su https://github.com/x", "il codice è su GitHub.")
+    monkeypatch.setattr(sanitizer, "generate_response", model)
+
+    sanitize_chunk("il codice è su ⟪github⟫", 0)
+    assert "SOLIDUS" in model.calls[1]
 
 
-def test_url_removal_keeps_surrounding_content():
-    out = scrub("Uno gennaio, Deep Delta Learning, https://arxiv.org/abs/2601.00417")
-    assert "Deep Delta Learning" in out
+def test_a_model_that_never_cleans_up_cannot_put_a_symbol_on_the_wire(monkeypatch):
+    model = _model("ancora ⟪sporco⟫ https://x.com/y", "sempre ⟪sporco⟫ https://x.com/y")
+    monkeypatch.setattr(sanitizer, "generate_response", model)
+
+    out = sanitize_chunk("usa ⟪ollama⟫ da https://x.com/y", 0)
+    assert len(model.calls) == sanitizer.MAX_ATTEMPTS
+    assert unspeakable_chars(out) == []
+    assert "sporco" in out, "the last resort drops the offending token, not the whole passage"
 
 
-def test_markdown_link_label_survives():
-    assert scrub("vedi [il repository](https://github.com/x/y) per i dettagli") == (
-        "vedi il repository per i dettagli"
-    )
+def test_a_failing_call_falls_back_to_deleting_rather_than_raising(monkeypatch):
+    def boom(prompt):
+        raise RuntimeError("bedrock is down")
+
+    monkeypatch.setattr(sanitizer, "generate_response", boom)
+    out = sanitize_chunk("il codice è su https://github.com/x per i dettagli", 0)
+    assert unspeakable_chars(out) == []
+    assert out == "il codice è su per i dettagli"
 
 
-@pytest.mark.parametrize("text", URL_SHARDS)
-def test_url_removal_is_idempotent(text):
-    once = scrub(text)
-    assert scrub(once) == once
+def test_an_empty_answer_drops_the_block(monkeypatch):
+    # How the prompt tells the model to decline, instead of explaining itself
+    # in a sentence that would be narrated as article prose.
+    model = _model("   ")
+    monkeypatch.setattr(sanitizer, "generate_response", model)
+
+    assert sanitize_chunk("usa ⟪ollama⟫", 0) == ""
+    assert len(model.calls) == 1
 
 
-# --- Language ---------------------------------------------------------------
+@pytest.mark.parametrize("text", REAL_SHARDS)
+def test_whatever_happens_the_output_is_speakable(monkeypatch, text):
+    monkeypatch.setattr(sanitizer, "generate_response", _model("ancora ⟪sporco⟫", "⟪ancora⟫"))
+    assert unspeakable_chars(sanitize_chunk(text, 0)) == []
 
 
-def test_equals_sign_is_spoken():
-    # `=` used to survive the scrub and reach the engine mute.
-    assert "=" not in scrub("utilizza enable_thinking=True")
-    assert "uguale a" in scrub("utilizza enable_thinking=True")
+# --- blocks and shards ------------------------------------------------------
 
 
-def test_spoken_forms_follow_the_requested_language():
-    text = "I pesi σ_1 con θ, e a <= b"
-    it, en = scrub(text, "Italian"), scrub(text, "English")
-    assert "minore o uguale a" in it and "less than or equal to" in en
-    assert "alfa" in scrub("α", "Italian") and "alpha" in scrub("α", "English")
+def _doc(*texts):
+    blocks = [Block(Kind.PROSE, text=t) for t in texts]
+    for b in blocks:
+        b.translated_text = b.text
+    return Document(blocks=blocks, visuals={}, notes={})
 
 
-def test_unknown_language_falls_back_without_crashing():
-    out = scrub("a <= b con σ", "Klingon")
-    assert not (set(out) & UNSPEAKABLE)
+def test_sanitize_blocks_fills_speech_text_and_writes_a_shard(monkeypatch, shards):
+    monkeypatch.setattr(sanitizer, "generate_response", _model())
+    doc = _doc("Prima frase.", "Seconda frase.")
+
+    sanitize_blocks(doc, "Articolo")
+
+    assert [b.speech_text for b in doc.blocks] == ["Prima frase.", "Seconda frase."]
+    assert (sanitizer.speech_shard_path("Articolo", 0)).read_text() == "Prima frase."
 
 
-def test_lexicons_cover_the_same_symbols():
-    it, en = load_lexicon("Italian"), load_lexicon("English")
-    assert set(it.symbols) == set(en.symbols)
-    assert [f for f, _ in it.sequences] == [f for f, _ in en.sequences]
+def test_a_second_run_resumes_from_shards(monkeypatch, shards):
+    monkeypatch.setattr(sanitizer, "generate_response", _model())
+    sanitize_blocks(_doc("Prima frase."), "Articolo")
+
+    def _unreachable(prompt):
+        raise AssertionError("the shard was on disk: the model must not be called")
+
+    monkeypatch.setattr(sanitizer, "generate_response", _unreachable)
+    doc = _doc("Prima frase.")
+    sanitize_blocks(doc, "Articolo")
+    assert doc.blocks[0].speech_text == "Prima frase."
 
 
-# --- Link markers, the LLM's view of a URL ----------------------------------
+def test_the_preceding_block_is_offered_as_context(monkeypatch, shards):
+    model = _model("pulito.")
+    monkeypatch.setattr(sanitizer, "generate_response", model)
 
+    doc = _doc("Il primo paragrafo introduce sigma.", "il valore ⟪sigma⟫ cresce")
+    sanitize_blocks(doc, "Articolo", max_workers=1)
 
-def test_mark_urls_keeps_the_host_and_drops_the_path():
-    out = mark_urls("il codice è qui: https://github.com/rasbt/evals")
-    assert "⟪link: github.com⟫" in out
-    assert "rasbt" not in out and "https" not in out
-
-
-def test_mark_urls_normalises_www_and_schemes():
-    assert "⟪link: example.com⟫" in mark_urls("vedi www.example.com per i dettagli")
-    assert "⟪link: arxiv.org⟫" in mark_urls("paper: https://arxiv.org/abs/2601.00417")
-
-
-def test_mark_urls_leaves_prose_alone():
-    text = "Il modello raggiunge il 92% di accuratezza."
-    assert mark_urls(text) == text
-
-
-def test_scrub_removes_a_marker_the_model_ignored():
-    out = scrub("il codice è disponibile qui: ⟪link: github.com⟫")
-    assert "link" not in out and "github" not in out
-    assert out == "il codice è disponibile qui."
-
-
-# --- Repair pass ------------------------------------------------------------
-
-SCRUBBED = "se hai clonato gli script da, possiamo eseguire quanto segue."
-
-
-@pytest.mark.parametrize(
-    "repaired,reason",
-    [
-        ("", "empty output"),
-        ("Non posso aiutarti con questa richiesta.", "commentary"),
-        ("se hai clonato gli script, esegui questo: https://github.com/x/y", "link"),
-        (SCRUBBED + " " + "Aggiungo un intero paragrafo di contesto inventato qui.", "grew"),
-        ("se hai clonato gli script.", "shrank"),
-    ],
-)
-def test_repair_guards_reject_a_rewrite(repaired, reason):
-    assert repair_is_acceptable(SCRUBBED, repaired) is not None
-
-
-def test_repair_guard_accepts_a_mend():
-    mended = "se hai clonato gli script, possiamo eseguire quanto segue."
-    assert repair_is_acceptable(SCRUBBED, mended) is None
-
-
-def _fake_llm(reply):
-    return lambda prompt: (reply, 0.0)
-
-
-def test_fallback_path_repairs_a_link_hole(monkeypatch):
-    # The sanitize call fails, so the block takes the scrub-only path; the
-    # repair call then mends what the link removal left behind.
-    calls = []
-
-    def generate_response(prompt):
-        calls.append(prompt)
-        if len(calls) == 1:
-            raise RuntimeError("bedrock unavailable")
-        return "se hai clonato gli script, possiamo eseguire quanto segue.", 0.0
-
-    monkeypatch.setattr(sanitizer, "generate_response", generate_response)
-    chunk = (
-        "se hai clonato gli script da https://github.com/rasbt/evals, "
-        "possiamo eseguire quanto segue."
-    )
-    out = sanitize_chunk(chunk, index=0)
-    assert out == "se hai clonato gli script, possiamo eseguire quanto segue."
-    assert len(calls) == 2
-
-
-def test_fallback_keeps_scrubbed_text_when_repair_misbehaves(monkeypatch):
-    def generate_response(prompt):
-        if "repair" in prompt.lower():
-            return "Certo! Ecco il testo corretto: vedi https://github.com/x/y", 0.0
-        raise RuntimeError("bedrock unavailable")
-
-    monkeypatch.setattr(sanitizer, "generate_response", generate_response)
-    out = sanitize_chunk("il codice è qui: https://github.com/rasbt/evals", index=0)
-    assert "http" not in out and "github" not in out
-    assert out == "il codice è qui."
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "DeepSeek 4.5 ha battuto il benchmark",
-        "GPT-4.5 è uscito questa settimana",
-    ],
-)
-def test_needs_llm_matches_a_name_followed_by_a_version_number(text):
-    # "4.5" read raw is ambiguous between a version's "point" and a locale's
-    # decimal/thousands separator: only the LLM pass can tell them apart.
-    assert NEEDS_LLM_RE.search(text)
-
-
-def test_needs_llm_does_not_match_a_plain_decimal_metric():
-    # A bare decimal with no name attached is not the pattern this exists
-    # for: routing every metric in an ML article through the LLM would be a
-    # much bigger cost change than the reported failure calls for.
-    assert not NEEDS_LLM_RE.search("l'accuratezza è salita al 95.3 per cento")
-
-
-def test_sanitize_chunk_routes_a_versioned_name_through_the_llm(monkeypatch):
-    calls = []
-
-    def generate_response(prompt):
-        calls.append(prompt)
-        return "DeepSeek quattro punto cinque ha battuto il benchmark.", 0.0
-
-    monkeypatch.setattr(sanitizer, "generate_response", generate_response)
-    out = sanitize_chunk("DeepSeek 4.5 ha battuto il benchmark.", index=0)
-    assert len(calls) == 1
-    assert "quattro punto cinque" in out
-
-
-def test_no_repair_call_without_links(monkeypatch):
-    monkeypatch.setattr(sanitizer, "generate_response", _fake_llm("mai chiamato"))
-    calls = []
-
-    def generate_response(prompt):
-        calls.append(prompt)
-        raise RuntimeError("bedrock unavailable")
-
-    monkeypatch.setattr(sanitizer, "generate_response", generate_response)
-    out = sanitize_chunk("il parametro enable_thinking=True è attivo", index=0)
-    assert "uguale a" in out
-    assert len(calls) == 1  # sanitize only, no repair
+    assert "Il primo paragrafo introduce sigma." in model.calls[0]
