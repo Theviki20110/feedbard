@@ -27,11 +27,11 @@ from concurrent.futures import ThreadPoolExecutor
 from jinja2 import Template
 
 from feedbard.ingestion.html_parser import Document, Kind
+from feedbard.language import TARGET_LANGUAGE
 from feedbard.llm_client import generate_response
 from feedbard.logger import logger
 from feedbard.paths import ASSETS_DIR, CODE_SHARDS_DIR, code_shard_path
-from feedbard.pipeline.lexicon import TARGET_LANGUAGE
-from feedbard.pipeline.sanitizer import ModelRefusedError, check_usable
+from feedbard.pipeline.sanitizer import is_effectively_empty
 
 CODE_PROMPT_PATH = ASSETS_DIR / "code_prompt.txt"
 
@@ -61,8 +61,9 @@ def save_code_shard(cid: str, description: str, language: str = TARGET_LANGUAGE)
 def describe_code(
     code: str, lang: str | None, title: str = "", language: str = TARGET_LANGUAGE
 ) -> str:
-    """One LLM call. Raises ModelRefusedError on output that cannot be
-    narrated; the caller decides what to do with a block it could not phrase."""
+    """One LLM call. Returns "" when the model declines, which the prompt
+    tells it to signal with an empty answer rather than with an explanation
+    that would otherwise be narrated as if the author had written it."""
     prompt = Template(CODE_PROMPT_PATH.read_text(encoding="utf-8")).render(
         CODE=code,
         CODE_LANGUAGE=lang or "unknown",
@@ -72,7 +73,9 @@ def describe_code(
     )
     described, elapsed = generate_response(prompt)
     logger.info("Code block %s described in %.2f seconds", code_id(code), elapsed)
-    check_usable(described, "describe_code", 0, source=code)
+    if is_effectively_empty(described):
+        logger.warning("describe_code %s: model returned nothing", code_id(code))
+        return ""
     return described.strip()
 
 
@@ -80,10 +83,13 @@ def _describe_or_drop(block, title: str, language: str) -> None:
     cid = code_id(block.text)
     try:
         description = describe_code(block.text, block.lang, title, language)
-    except (ModelRefusedError, RuntimeError, ValueError):
+    except (RuntimeError, ValueError):
         logger.warning(
             "describe_code failed for %s, dropping the block from narration", cid, exc_info=True
         )
+        block.description = None
+        return
+    if not description:
         block.description = None
         return
     block.description = description

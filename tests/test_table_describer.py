@@ -59,14 +59,14 @@ def test_a_second_run_resumes_from_the_shard(monkeypatch, tmp_path):
     assert len(calls) == 1
 
 
-def test_a_refusal_falls_back_to_reading_the_rows(monkeypatch, tmp_path):
+def test_a_declined_table_falls_back_to_reading_the_rows(monkeypatch, tmp_path):
     # The numbers have to survive a model that will not play along.
     monkeypatch.setattr(table_describer, "TABLE_SHARDS_DIR", tmp_path)
     monkeypatch.setattr(table_describer, "table_shard_path", lambda tid: tmp_path / f"{tid}.json")
     monkeypatch.setattr(
         table_describer,
         "generate_response",
-        lambda prompt: ("Mi dispiace, non posso aiutarti con questa richiesta.", 0.0),
+        lambda prompt: ("", 0.0),
     )
 
     doc = _doc(ROWS)

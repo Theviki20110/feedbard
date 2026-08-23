@@ -45,7 +45,7 @@ def test_a_second_run_resumes_from_the_shard(monkeypatch, tmp_path):
     assert len(calls) == 1
 
 
-def test_a_refusal_drops_the_block_rather_than_reading_it_raw(monkeypatch, tmp_path):
+def test_a_declined_block_is_dropped_rather_than_read_raw(monkeypatch, tmp_path):
     # Unlike a table's numbers, raw code carries nothing a listener can use:
     # a description that failed should leave the block silent, not fall back
     # to reading the source characters aloud.
@@ -54,7 +54,7 @@ def test_a_refusal_drops_the_block_rather_than_reading_it_raw(monkeypatch, tmp_p
     monkeypatch.setattr(
         code_describer,
         "generate_response",
-        lambda prompt: ("Mi dispiace, non posso aiutarti con questa richiesta.", 0.0),
+        lambda prompt: ("", 0.0),
     )
 
     doc = _doc(CODE)

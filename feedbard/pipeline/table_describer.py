@@ -24,11 +24,11 @@ from concurrent.futures import ThreadPoolExecutor
 from jinja2 import Template
 
 from feedbard.ingestion.html_parser import Document, Kind
+from feedbard.language import TARGET_LANGUAGE
 from feedbard.llm_client import generate_response
 from feedbard.logger import logger
 from feedbard.paths import ASSETS_DIR, TABLE_SHARDS_DIR, table_shard_path
-from feedbard.pipeline.lexicon import TARGET_LANGUAGE
-from feedbard.pipeline.sanitizer import ModelRefusedError, check_usable
+from feedbard.pipeline.sanitizer import is_effectively_empty
 
 TABLE_PROMPT_PATH = ASSETS_DIR / "table_prompt.txt"
 
@@ -72,8 +72,9 @@ def save_table_shard(tid: str, description: str, language: str = TARGET_LANGUAGE
 
 
 def describe_table(rows: list[list[str]], title: str = "", language: str = TARGET_LANGUAGE) -> str:
-    """One LLM call. Raises ModelRefusedError on output that cannot be
-    narrated; the caller decides what to do with a table it could not phrase."""
+    """One LLM call. Returns "" when the model declines, which the prompt
+    tells it to signal with an empty answer; the caller decides what to do
+    with a table it could not phrase."""
     shown = rows[:MAX_PROMPT_ROWS]
     prompt = Template(TABLE_PROMPT_PATH.read_text(encoding="utf-8")).render(
         TABLE=render_rows(shown),
@@ -84,7 +85,9 @@ def describe_table(rows: list[list[str]], title: str = "", language: str = TARGE
     )
     described, elapsed = generate_response(prompt)
     logger.info("Table %s described in %.2f seconds", table_id(rows), elapsed)
-    check_usable(described, "describe_table", 0, source=render_rows(shown))
+    if is_effectively_empty(described):
+        logger.warning("describe_table %s: model returned nothing", table_id(rows))
+        return ""
     return described.strip()
 
 
@@ -92,12 +95,16 @@ def _describe_or_flatten(block, title: str, language: str) -> None:
     tid = table_id(block.rows)
     try:
         description = describe_table(block.rows, title, language)
-    except (ModelRefusedError, RuntimeError, ValueError):
+    except (RuntimeError, ValueError):
         logger.warning(
             "describe_table failed for %s, falling back to reading the rows out",
             tid,
             exc_info=True,
         )
+        block.description = flatten_rows(block.rows)
+        return
+    if not description:
+        # No number is lost this way, which is the only guarantee that matters.
         block.description = flatten_rows(block.rows)
         return
     block.description = description
