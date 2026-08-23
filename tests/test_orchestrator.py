@@ -45,14 +45,13 @@ def stages(monkeypatch):
     monkeypatch.setattr(orchestrator, "describe_tables", make("describe_tables"))
     monkeypatch.setattr(orchestrator, "describe_code_blocks", make("describe_code_blocks"))
     monkeypatch.setattr(orchestrator, "attach_descriptions", make("attach_descriptions", 0))
-    monkeypatch.setattr(
-        orchestrator, "translate_blocks", make("translate_blocks", lambda d, t: d)
-    )
+    monkeypatch.setattr(orchestrator, "translate_blocks", make("translate_blocks", lambda d, t: d))
     monkeypatch.setattr(orchestrator, "sanitize_blocks", make("sanitize_blocks", lambda d, t: d))
     monkeypatch.setattr(
         orchestrator, "generate_audio_from_blocks", make("generate_audio_from_blocks", "dest.mp3")
     )
     monkeypatch.setattr(orchestrator, "publish", make("publish"))
+    monkeypatch.setattr(orchestrator, "triage", make("triage"))
     return order
 
 
@@ -60,6 +59,7 @@ def test_process_item_runs_the_stages_in_pipeline_order(stages):
     orchestrator.process_item(_item())
     assert stages == [
         "extract",
+        "triage",
         "describe_visuals",
         "describe_tables",
         "describe_code_blocks",

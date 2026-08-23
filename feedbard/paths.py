@@ -84,6 +84,7 @@ AUDIO_SHARDS_DIR = SHARDS_DIR / "audio"
 VISUAL_SHARDS_DIR = SHARDS_DIR / "visual"
 TABLE_SHARDS_DIR = SHARDS_DIR / "table"
 CODE_SHARDS_DIR = SHARDS_DIR / "code"
+TRIAGE_SHARDS_DIR = SHARDS_DIR / "triage"
 
 ALL_DIRS = (
     EPISODES_DIR,
@@ -96,6 +97,7 @@ ALL_DIRS = (
     VISUAL_SHARDS_DIR,
     TABLE_SHARDS_DIR,
     CODE_SHARDS_DIR,
+    TRIAGE_SHARDS_DIR,
 )
 
 
@@ -165,6 +167,10 @@ def table_shard_path(tid: str) -> Path:
 
 def code_shard_path(cid: str) -> Path:
     return CODE_SHARDS_DIR / f"{cid}.json"
+
+
+def triage_shard_path(title: str) -> Path:
+    return TRIAGE_SHARDS_DIR / f"{slug(title)}.json"
 
 
 # Audiobookshelf parses author and title out of the folder names themselves,

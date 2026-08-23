@@ -35,9 +35,13 @@ def attach_descriptions(doc: Document) -> int:
     """
     attached = 0
     for block in doc.blocks:
+        if block.dropped:
+            # `triage` judged it to carry nothing; giving it a description
+            # here would put it back into the episode.
+            continue
         if block.kind is Kind.VISUAL:
             visual = doc.visuals.get(block.vid or "")
-            # A decorativo visual is a banner or a logo: the vision pass judged
+            # A decorative visual is a banner or a logo: the vision pass judged
             # it to carry nothing the article doesn't already say, so narrating
             # it would only interrupt the prose.
             if visual is None or visual.klass == SKIPPED_KLASS:

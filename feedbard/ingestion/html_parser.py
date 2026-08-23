@@ -22,7 +22,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 
@@ -77,123 +77,6 @@ BOILERPLATE_SELECTORS = (
     "form",
 )
 
-# Tail sections: from the first matching heading, stop emitting.
-# Bibliography and author bio are noise in audio.
-TAIL_HEADINGS = re.compile(
-    r"^\s*(bibliography|references|new to the newsletter|"
-    r"acknowledg|further reading|share this post|bibliografia)",
-    re.I,
-)
-
-# Introduces a footnote body once it has been folded into the citing block.
-# Source-language on purpose: the translator renders it in the narration
-# language along with the rest of the block.
-NOTE_LABEL = "Note:"
-
-GENERIC_ANCHORS = frozenset(
-    {
-        "link",
-        "source",
-        "here",
-        "this",
-        "qui",
-        "fonte",
-        "read more",
-        "read full story",
-        "continua",
-        "vedi",
-        "see",
-        "click here",
-        "leggi",
-        "subscribe",
-        "subscribe now",
-        "sign in",
-    }
-)
-
-# A "buy the book" list item: a single link to a retailer, plus at most a
-# short parenthetical (format, page count, "early access"). Dropped at the
-# block level rather than sent to the translator -- a blurb naming a page
-# count reads, out of context, like a request to reproduce the book itself,
-# and models have refused to translate it on copyright grounds.
-#
-# Confirmed on a live Substack post: the href is often the retailer's own
-# short-link domain (Manning's `mng.bz`, Amazon's `amzn.to`), not
-# `manning.com`/`amazon.*` -- so the label is checked as well as the host,
-# since it survives whatever shortener or tracking wrapper the href uses.
-BOOK_RETAILER_HOSTS = (
-    "amazon.",  # multiple TLDs: amazon.com, amazon.it, amazon.co.uk...
-    "amzn.to",
-    "manning.com",
-    "mng.bz",
-    "oreilly.com",
-    "packtpub.com",
-    "leanpub.com",
-    "apress.com",
-    "nostarch.com",
-    "gumroad.com",
-)
-BOOK_RETAILER_LABELS = frozenset(
-    {
-        "amazon",
-        "kindle",
-        "manning",
-        "o'reilly",
-        "oreilly",
-        "packt",
-        "leanpub",
-        "apress",
-        "no starch press",
-        "gumroad",
-    }
-)
-PURCHASE_ITEM_MAX_CHARS = 200
-
-# What may follow the label: nothing, or one short parenthetical. A sentence
-# that happens to link out ("See the paper on Amazon for...") does not match,
-# because the link text there is not the whole item's opening word.
-_TRAILING_PARENTHETICAL_RE = re.compile(r"\(.*\)\.?")
-
-
-def _is_purchase_link_item(li: Tag) -> bool:
-    anchors = li.find_all("a")
-    if len(anchors) != 1:
-        return False
-    anchor_text = anchors[0].get_text(" ", strip=True)
-    host = (urlparse(anchors[0].get("href") or "").hostname or "").lower().removeprefix("www.")
-    matches_retailer = anchor_text.strip().lower() in BOOK_RETAILER_LABELS or any(
-        host.startswith(d) if d.endswith(".") else host == d or host.endswith("." + d)
-        for d in BOOK_RETAILER_HOSTS
-    )
-    if not matches_retailer:
-        return False
-
-    full_text = li.get_text(" ", strip=True)
-    if not full_text.startswith(anchor_text) or len(full_text) > PURCHASE_ITEM_MAX_CHARS:
-        return False
-    remainder = full_text[len(anchor_text) :].strip()
-    return not remainder or bool(_TRAILING_PARENTHETICAL_RE.fullmatch(remainder))
-
-
-# Captions with no real content: "(from [1, 3, 4])", "caption...", "(from [5])"
-CAPTION_NOISE = re.compile(
-    r"^\(?\s*(?:from\s*\[[\d,\s]+\]|caption\.*|source|fonte)\s*\)?[.\s]*$", re.I
-)
-
-# NB: a paragraph can contain both deictics ("...; see above. A
-# concrete implementation is provided below."). BACK takes priority because
-# it concerns the resource we're positioning; FWD concerns the next one.
-DEICTIC_BACK = re.compile(
-    r"\b(shown|depicted|see|seen|illustrated|as)\s+(above|earlier)\b"
-    r"|\bsopra\b|\bcome\s+visto\b",
-    re.I,
-)
-DEICTIC_FWD = re.compile(
-    r"\bsee\s+below\b|\bshown\s+below\b|\bas\s+follows\b|\bbelow[;.,]"
-    r"|\bsotto\b|\bqui\s+sotto\b",
-    re.I,
-)
-
 # Aspect ratio is a cheap PRE-ROUTER, not a reliable classifier:
 # in this article a 3462x1056 strip (ratio 3.28) is a curve chart,
 # and a 1306x690 one (ratio 1.89) is a formula. It only picks the starting
@@ -202,14 +85,6 @@ DEICTIC_FWD = re.compile(
 # charts as formulas, because the "paraphrase the formula" prompt on a chart
 # produces made-up output.
 FORMULA_ASPECT_MIN = 4.0
-
-# Words in the caption that push the pre-router toward "formula",
-# regardless of aspect ratio.
-FORMULA_CAPTION = re.compile(
-    r"\b(formal\s+definition|objective|loss|formulation|equation|estimation|"
-    r"definizione|obiettivo|equazione)\b",
-    re.I,
-)
 
 
 class Kind(str, Enum):
@@ -233,6 +108,10 @@ class Block:
     rows: list[list[str]] = field(default_factory=list)
     note_ids: list[str] = field(default_factory=list)
     deictic: str | None = None
+    # Set by `pipeline.triage` on a block the model judged to carry nothing a
+    # listener needs. The block stays in the list, emptied, so that every
+    # per-block shard on disk keeps the index it was written under.
+    dropped: bool = False
     # Narratable prose for a block that has none of its own. Filled in
     # downstream for TABLE (by table_describer); a VISUAL's equivalent lives on
     # the Visual, which is keyed on content and so shared between articles.
@@ -255,7 +134,7 @@ class Visual:
     hint: str = "figure"  # formula | figure | banner
     hero: bool = False  # topImage: header image
     # filled in downstream by the vision pass, not here
-    klass: str | None = None  # decorativo | illustrativo | essenziale
+    klass: str | None = None  # see visual_describer.KLASSES
     description: str | None = None
 
 
@@ -335,7 +214,6 @@ class Extractor:
         self.dropped: dict[str, int] = {}
         self.truncated_at: str | None = None
         self._pending_notes: list[str] = []
-        self._stop = False
 
     # -- entry ---------------------------------------------------------------
 
@@ -348,7 +226,6 @@ class Extractor:
             if isinstance(node, Tag):
                 self._dispatch(node)
         self._inline_notes()
-        self._reposition_visuals()
         return Document(self.blocks, self.visuals, self.notes, self.dropped, self.truncated_at)
 
     def _find_article(self) -> Tag:
@@ -386,8 +263,6 @@ class Extractor:
     # -- dispatch --------------------------------------------------------------
 
     def _dispatch(self, node: Tag) -> None:
-        if self._stop:
-            return
         name = node.name.lower()
         classes = node.get("class") or []
 
@@ -425,10 +300,6 @@ class Extractor:
         text = self._collapse(self._inline(node))
         if not text:
             return
-        if TAIL_HEADINGS.match(text):
-            self._stop = True
-            self.truncated_at = text
-            return
         self.blocks.append(Block(Kind.HEADING, text=text, level=level))
 
     def _emit_prose(self, node: Tag) -> None:
@@ -442,12 +313,7 @@ class Extractor:
         text = self._collapse(self._inline(node))
         if not text:
             return
-        blk = Block(Kind.PROSE, text=text, note_ids=self._drain_notes())
-        if DEICTIC_BACK.search(text):
-            blk.deictic = "back"
-        elif DEICTIC_FWD.search(text):
-            blk.deictic = "fwd"
-        self.blocks.append(blk)
+        self.blocks.append(Block(Kind.PROSE, text=text, note_ids=self._drain_notes()))
 
     def _emit_visual(self, node: Tag, img: Tag | None = None) -> None:
         img = img or node.find("img")
@@ -482,12 +348,6 @@ class Extractor:
 
         cap_node = node.find("figcaption") if isinstance(node, Tag) else None
         caption = self._collapse(self._inline(cap_node)) if cap_node else ""
-        if CAPTION_NOISE.match(caption):
-            caption = ""
-
-        # The caption, when present, beats geometry.
-        if hint != "formula" and FORMULA_CAPTION.search(caption):
-            hint = "formula"
 
         self.visuals[vid] = Visual(
             vid=vid,
@@ -548,18 +408,7 @@ class Extractor:
             self.blocks.append(Block(Kind.QUOTE, text=text, note_ids=self._drain_notes()))
 
     def _emit_list(self, node: Tag) -> None:
-        keep, purchase_links = [], 0
-        for li in node.find_all("li", recursive=False):
-            if _is_purchase_link_item(li):
-                purchase_links += 1
-            else:
-                keep.append(li)
-        if purchase_links:
-            self.dropped["li:book-retailer-link"] = (
-                self.dropped.get("li:book-retailer-link", 0) + purchase_links
-            )
-
-        items = [self._collapse(self._inline(li)) for li in keep]
+        items = [self._collapse(self._inline(li)) for li in node.find_all("li", recursive=False)]
         items = [i for i in items if i]
         if items:
             self.blocks.append(
@@ -586,10 +435,7 @@ class Extractor:
             if href.startswith("#footnote"):
                 self._pending_notes.append(href.split("-")[-1])
                 return ""  # [3] mid-sentence breaks prosody
-            label = node.get_text(" ", strip=True)
-            if label.strip().lower().strip(".,:;") in GENERIC_ANCHORS:
-                return ""
-            return label  # anchor text, URL discarded
+            return node.get_text(" ", strip=True)  # anchor text, URL discarded
 
         if name == "code":
             inner = node.get_text("", strip=True)
@@ -622,44 +468,17 @@ class Extractor:
         after the sentence that needs it, and costs no extra structure: the
         block count is unchanged, so every per-block shard still lines up.
 
-        The label is written in the source language and translated along with
-        the block, so no per-language table is needed here.
+        The body is appended as its own sentence, with no introducing label:
+        any word that could introduce it ("Note:") would have to be written in
+        some language, and the note reads perfectly well as a sentence that
+        follows the one citing it.
         """
         for blk in self.blocks:
             bodies = [self.notes[nid] for nid in blk.note_ids if self.notes.get(nid)]
             if not bodies:
                 continue
             head = blk.text if blk.text.endswith((".", "!", "?", ":", ";")) else blk.text + "."
-            blk.text = " ".join([head, *(f"{NOTE_LABEL} {body}" for body in bodies)]).strip()
-
-    # -- repositioning -------------------------------------------------------
-
-    def _reposition_visuals(self) -> None:
-        """DOM position isn't always the right one for listening.
-
-        If the resource precedes the paragraph that comments on it with "as
-        shown above", the listener hits the description without having the
-        context yet: move it after that paragraph. If the preceding
-        paragraph says "see below", the position is already correct.
-        """
-        out: list[Block] = []
-        i, n = 0, len(self.blocks)
-        while i < n:
-            blk = self.blocks[i]
-            nxt = self.blocks[i + 1] if i + 1 < n else None
-            if (
-                blk.kind is Kind.VISUAL
-                and nxt is not None
-                and nxt.kind in (Kind.PROSE, Kind.LIST)
-                and nxt.deictic == "back"
-            ):
-                out.extend([nxt, blk])
-                i += 2
-                continue
-            out.append(blk)
-            i += 1
-        self.blocks = out
-
+            blk.text = " ".join([head, *bodies]).strip()
 
 def extract(html: str) -> Document:
     return Extractor(html).run()

@@ -32,7 +32,9 @@ def test_footnote_body_is_folded_into_the_citing_block():
 def test_footnote_marker_never_reaches_the_text_inline():
     doc = extract(FOOTNOTE_HTML)
     prose = [b for b in doc.blocks if b.kind is Kind.PROSE]
-    assert "filtrato Note:" in prose[0].text or "filtrato. Note:" in prose[0].text
+    # The body is appended as its own sentence, with no introducing label:
+    # any word that introduced it ("Note:") would have to be in some language.
+    assert "Il filtro rimuove i duplicati esatti." in prose[0].text
 
 
 def test_a_block_without_notes_is_untouched():
@@ -128,30 +130,6 @@ def test_hr_script_style_svg_and_button_produce_no_block():
 # --------------------------------------------------------------------------
 
 
-def test_tail_heading_stops_extraction_and_is_not_itself_emitted():
-    html = """
-    <article>
-      <p>Corpo dell'articolo.</p>
-      <h2>Bibliography</h2>
-      <p>Un riferimento che non deve essere narrato.</p>
-    </article>
-    """
-    doc = extract(html)
-    assert [b.text for b in doc.blocks] == ["Corpo dell'articolo."]
-    assert doc.truncated_at == "Bibliography"
-
-
-def test_tail_heading_match_is_case_insensitive_and_matches_italian_too():
-    doc = extract("<article><p>Corpo.</p><h3>Bibliografia</h3><p>Nota.</p></article>")
-    assert doc.truncated_at == "Bibliografia"
-    assert len(doc.blocks) == 1
-
-
-# --------------------------------------------------------------------------
-# Headings and prose
-# --------------------------------------------------------------------------
-
-
 def test_heading_level_is_recorded():
     doc = extract("<article><h3>Un titolo</h3></article>")
     heading = doc.blocks[0]
@@ -173,12 +151,6 @@ def test_empty_prose_produces_no_block():
 # --------------------------------------------------------------------------
 # Anchors and inline code
 # --------------------------------------------------------------------------
-
-
-def test_generic_anchor_text_is_discarded():
-    html = '<article><p>Il codice è <a href="https://x.example">qui</a>.</p></article>'
-    doc = extract(html)
-    assert doc.blocks[0].text == "Il codice è ."
 
 
 def test_meaningful_anchor_text_is_kept_without_the_url():
@@ -256,45 +228,6 @@ def test_nested_list_items_do_not_leak_into_the_parent_list():
     assert lists[0].text.count("Primo") == 1
 
 
-def test_book_retailer_link_item_is_dropped_from_a_list():
-    # A blurb naming a page count reads, out of context, like a request to
-    # reproduce the book -- some models refuse to translate it. It never
-    # reaches the translator at all.
-    html = (
-        "<article><ul>"
-        '<li>There is a lot of discussion around reasoning.</li>'
-        '<li><a href="https://www.amazon.com/dp/xyz">Amazon</a> '
-        "(pre-order of Kindle ebook and print paperback)</li>"
-        '<li><a href="https://www.manning.com/books/xyz">Manning</a> '
-        "(complete book in early access, pre-final layout, 528 pages)</li>"
-        "</ul></article>"
-    )
-    doc = extract(html)
-    block = doc.blocks[0]
-    assert block.kind is Kind.LIST
-    assert "Amazon" not in block.text
-    assert "Manning" not in block.text
-    assert "reasoning" in block.text
-    assert doc.dropped["li:book-retailer-link"] == 2
-
-
-def test_book_retailer_link_item_is_dropped_even_behind_a_shortener():
-    # Confirmed on a live post: the href is the retailer's own short-link
-    # domain (mng.bz, amzn.to), not manning.com/amazon.* -- the label is
-    # what has to catch it.
-    html = (
-        "<article><ul>"
-        '<li><a href="https://amzn.to/4aAKiFY">Amazon</a> '
-        "(pre-order of Kindle ebook and print paperback)</li>"
-        '<li><a href="https://mng.bz/Nwr7">Manning</a> '
-        "(complete book in early access, pre-final layout, 528 pages)</li>"
-        "</ul></article>"
-    )
-    doc = extract(html)
-    assert not doc.blocks
-    assert doc.dropped["li:book-retailer-link"] == 2
-
-
 def test_a_link_list_item_with_extra_prose_is_kept():
     # Not every list item with a link is a purchase blurb: one with a full
     # sentence around it is real content and must reach the translator.
@@ -366,30 +299,6 @@ def test_ordinary_aspect_ratio_is_classified_as_figure():
     assert v.hint == "figure"
 
 
-def test_caption_keywords_override_geometry_towards_formula():
-    html = """
-    <article><figure>
-      <img src="https://cdn.example/plot_1200x1000.png">
-      <figcaption>Formal definition of the loss</figcaption>
-    </figure></article>
-    """
-    doc = extract(html)
-    v = next(iter(doc.visuals.values()))
-    assert v.hint == "formula"
-
-
-def test_noise_only_caption_is_discarded():
-    html = """
-    <article><figure>
-      <img src="https://cdn.example/plot_1200x1000.png">
-      <figcaption>(from [1, 3])</figcaption>
-    </figure></article>
-    """
-    doc = extract(html)
-    v = next(iter(doc.visuals.values()))
-    assert v.caption == ""
-
-
 def test_hero_image_is_flagged_from_top_image_attr():
     html = """
     <article><img data-attrs='{"src": "https://cdn.example/a.png", "topImage": true}'
@@ -418,17 +327,6 @@ def test_same_image_reused_twice_shares_one_visual_entry():
 # --------------------------------------------------------------------------
 # Deictic repositioning
 # --------------------------------------------------------------------------
-
-
-def test_visual_moves_after_a_paragraph_that_refers_back_to_it():
-    html = """
-    <article>
-      <img src="https://cdn.example/a_1200x900.png">
-      <p>Come mostrato sopra, il modello converge rapidamente.</p>
-    </article>
-    """
-    doc = extract(html)
-    assert [b.kind for b in doc.blocks] == [Kind.PROSE, Kind.VISUAL]
 
 
 def test_visual_stays_put_before_a_paragraph_that_refers_forward():
