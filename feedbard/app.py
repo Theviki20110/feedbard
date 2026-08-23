@@ -16,10 +16,10 @@ def check_and_run() -> None:
         new_entries = [e for e in entries if e["url"] in new_urls]
 
         if not new_entries:
-            logger.info("[%s] nessun nuovo post", feed_url)
+            logger.info("[%s] no new posts", feed_url)
             continue
 
-        logger.info("[%s] %d nuovo/i post trovato/i, avvio pipeline", feed_url, len(new_entries))
+        logger.info("[%s] %d new post(s), starting the pipeline", feed_url, len(new_entries))
         feeds = get_feeds(new_entries)
         process_feeds(feeds)
 
