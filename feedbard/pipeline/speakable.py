@@ -91,14 +91,21 @@ OWN_MARKUP = (SYM_OPEN, SYM_CLOSE)
 # punctuation and passes the allowlist, so only the run gives them away.
 DASH_RUN_RE = re.compile(r"[\u2010-\u2015\-]{2,}")
 
-# A name followed by a dotted version number: `DeepSeek 4.5`, `GPT-4.5`.
-# Every character in it is allowed, so only this rule routes it to the model.
-# Read as a decimal it becomes a different number -- and in a locale where the
-# dot is the thousands separator, a very different one. The capitalization of
-# the name is what separates it from a plain metric ("salita al 95.3"), and it
-# is tested with `str.isupper` rather than an `[A-Z]` class so that it holds
-# for any bicameral script.
-VERSIONED_NAME_RE = re.compile(r"(?<!\w)([^\W\d_][^\W\d_]*)[ -](\d+\.\d+)(?!\d)")
+# A name followed by a dotted version number: `DeepSeek 4.5`, `GPT-4.5`,
+# `Qwen3.5`, `V3.2`, `K2.5`. Every character in it is allowed, so only this
+# rule routes it to the model. Read as a decimal it becomes a different number
+# -- and in a locale where the dot is the thousands separator, a very
+# different one.
+#
+# The separator is optional. Requiring one caught `DeepSeek 4.5` and missed
+# every name with the version glued straight onto it, which is how most model
+# names are written.
+#
+# The capitalization of the name is what separates a version from a plain
+# metric: with the separator optional, `salita al 95.3` would otherwise match
+# on "al". It is tested with `str.isupper` rather than an `[A-Z]` class so it
+# holds for any bicameral script.
+VERSIONED_NAME_RE = re.compile(r"(?<!\w)([^\W\d_][^\W\d_]*)[ -]?(\d+\.\d+)(?!\d)")
 
 
 @cache

@@ -61,7 +61,19 @@ def test_a_foreign_letter_is_notation_but_its_own_script_is_prose():
     assert not needs_llm("Ο συντελεστής σ είναι μικρός")
 
 
-@pytest.mark.parametrize("text", ["DeepSeek 4.5 è uscito", "GPT-4.5 ha vinto"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "DeepSeek 4.5 è uscito",
+        "GPT-4.5 ha vinto",
+        # Glued straight on, which is how most model names are written. The
+        # rule used to demand a space or a hyphen and missed every one of
+        # these -- 114 blocks of the shipped corpus.
+        "il modello V3.2 è nuovo",
+        "Qwen3.5 batte K2.5",
+        "MiniMax M2.1 e GLM-4.7",
+    ],
+)
 def test_a_versioned_name_is_caught_although_every_character_is_allowed(text):
     # "4.5" read as a decimal is a different number, and in a locale where the
     # dot separates thousands it is a very different one.
@@ -69,8 +81,18 @@ def test_a_versioned_name_is_caught_although_every_character_is_allowed(text):
     assert needs_llm(text)
 
 
-def test_a_plain_decimal_is_left_alone():
-    assert not needs_llm("l'accuratezza è salita al 95.3 per cento")
+@pytest.mark.parametrize(
+    "text",
+    [
+        "l'accuratezza è salita al 95.3 per cento",
+        "circa 3.5 milioni di token",
+        "il valore 0.5 resta invariato",
+    ],
+)
+def test_a_plain_decimal_is_left_alone(text):
+    # The capitalization of the name is what separates a version from a
+    # metric: with the separator optional, "al 95.3" would otherwise match.
+    assert not needs_llm(text)
 
 
 def test_the_reason_is_reported_for_the_prompt_and_the_log():
