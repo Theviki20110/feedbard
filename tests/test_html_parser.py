@@ -388,3 +388,33 @@ def test_stable_id_is_deterministic_and_content_addressed():
     assert a == b
     assert a != c
     assert len(a) == 10
+
+
+# --- superscripts and subscripts -------------------------------------------
+
+
+def test_superscript_is_kept_rather_than_silently_discarded():
+    # `<sup>` used to be dropped with the rest of the ignorable inline tags,
+    # which turned O(n squared) into O(n): a different claim, and nothing
+    # downstream could tell it had happened.
+    doc = extract("<article><p>complessità da O(n<sup>2</sup>) a O(n).</p></article>")
+    assert doc.blocks[0].text == "complessità da O(n²) a O(n)."
+
+
+def test_a_subscript_with_no_unicode_form_falls_back_to_plain_notation():
+    # There is no subscript `q`, and fusing it would give "Wq", a word.
+    doc = extract("<article><p>Il peso W<sub>q</sub> conta.</p></article>")
+    assert doc.blocks[0].text == "Il peso W_q conta."
+
+
+def test_a_footnote_marker_inside_a_superscript_is_still_a_footnote():
+    # Descending into <sup> reaches the anchor branch, which records the note
+    # and drops the number instead of superscripting it.
+    html = (
+        '<article><p>Vedi la nota<sup><a href="#footnote-1">1</a></sup> qui.</p>'
+        '<div class="footnote"><a class="footnote-number" id="footnote-1">1</a>'
+        '<div class="footnote-content">Il corpo della nota.</div></div></article>'
+    )
+    doc = extract(html)
+    assert "1" not in doc.blocks[0].text
+    assert "Il corpo della nota." in doc.blocks[0].text

@@ -34,6 +34,22 @@ from bs4 import BeautifulSoup, NavigableString, Tag
 # braces and math brackets get rewritten, these don't.
 SYM_OPEN, SYM_CLOSE = "\u27ea", "\u27eb"  # double angle brackets, for inline symbols
 
+# `<sup>` and `<sub>` carry the exponent and the index, which is the whole
+# claim in `O(n²)` or `σ_1`. Discarding the tag discards the mathematics and
+# leaves prose that reads as if it had never been there -- `O(n²)` becomes
+# `O(n)`, which is a different statement, and nothing downstream can tell.
+#
+# Folding them into the Unicode superscript and subscript forms keeps the
+# claim in a single character. The speech pass already treats those characters
+# as notation to be spoken, so the rest of the chain needs no change.
+# Unicode has no superscript or subscript form for most letters, so a
+# `<sub>q</sub>` cannot be folded into one character. Those fall back to the
+# plain-text notation an author would type -- `W_q`, `x^k` -- which the speech
+# pass also treats as notation. Fusing them instead would give `Wq`, a word.
+SUPERSCRIPT = str.maketrans("0123456789+-=()n", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿ")
+SUBSCRIPT = str.maketrans("0123456789+-=()aeoxn", "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₒₓₙ")
+SCRIPT_FALLBACK = {"sup": "^", "sub": "_"}
+
 # A visual keeps its own block in the stream rather than a placeholder inside
 # a neighbouring one: the position is already recorded by the block order, and
 # a token embedded in prose has to survive every LLM pass that touches it.
@@ -441,7 +457,20 @@ class Extractor:
             inner = node.get_text("", strip=True)
             return f"{SYM_OPEN}{inner}{SYM_CLOSE}" if inner else ""
 
-        if name in ("sup", "img", "svg", "button", "script", "style"):
+        if name in ("sup", "sub"):
+            # Descended into, not skipped: a footnote marker is often an
+            # anchor inside a <sup>, and the branch above is what records the
+            # note and drops the number. What survives here is a real
+            # exponent or index.
+            inner = "".join(self._inline(c) for c in node.children).strip()
+            if not inner:
+                return ""
+            table = SUPERSCRIPT if name == "sup" else SUBSCRIPT
+            if all(ord(ch) in table for ch in inner):
+                return inner.translate(table)
+            return SCRIPT_FALLBACK[name] + inner
+
+        if name in ("img", "svg", "button", "script", "style"):
             return ""
         if name == "br":
             return " "
