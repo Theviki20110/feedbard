@@ -26,7 +26,11 @@ import unicodedata
 from collections import Counter
 from functools import cache
 
+from babel import Locale
+from babel.numbers import get_decimal_symbol, get_group_symbol
+
 from feedbard.ingestion.html_parser import SYM_CLOSE, SYM_OPEN
+from feedbard.language import TARGET_LANGUAGE, language_code
 
 # Letters (every script), the combining marks that Arabic, Devanagari and
 # Vietnamese are unreadable without, decimal digits, and spaces.
@@ -81,31 +85,59 @@ def is_effectively_empty(text: str) -> bool:
     reply about the input being empty, which then gets narrated."""
     return not remove_invisible(text).strip()
 
+
 # The parser's own inline-code delimiters. They are markup this pipeline put
 # there, not something an author wrote, so they are stripped before the
 # last-resort scrub rather than dragging their contents out with them.
 OWN_MARKUP = (SYM_OPEN, SYM_CLOSE)
 
-# Two or more dashes in a row: a command-line flag (`--model`), a rule drawn
-# out of hyphens, an arrow typed as `-->`. Each individual dash is ordinary
-# punctuation and passes the allowlist, so only the run gives them away.
-DASH_RUN_RE = re.compile(r"[\u2010-\u2015\-]{2,}")
 
-# A name followed by a dotted version number: `DeepSeek 4.5`, `GPT-4.5`,
-# `Qwen3.5`, `V3.2`, `K2.5`. Every character in it is allowed, so only this
-# rule routes it to the model. Read as a decimal it becomes a different number
-# -- and in a locale where the dot is the thousands separator, a very
-# different one.
-#
-# The separator is optional. Requiring one caught `DeepSeek 4.5` and missed
-# every name with the version glued straight onto it, which is how most model
-# names are written.
-#
-# The capitalization of the name is what separates a version from a plain
-# metric: with the separator optional, `salita al 95.3` would otherwise match
-# on "al". It is tested with `str.isupper` rather than an `[A-Z]` class so it
-# holds for any bicameral script.
-VERSIONED_NAME_RE = re.compile(r"(?<!\w)([^\W\d_][^\W\d_]*)[ -]?(\d+\.\d+)(?!\d)")
+# What a word looks like. Letters, and the apostrophe or hyphen that joins two
+# of them -- `l'accuratezza`, `e-mail`. Joining, not leading or trailing: a
+# token that opens on a dash is a command-line flag, not a word.
+WORD_JOINERS = "'\u2019\u02bc-\u2010\u2011\u2012\u2013\u2014\u2015"
+
+
+@cache
+def _number_re(language: str) -> re.Pattern:
+    """How `language` writes a number, according to CLDR.
+
+    Asked rather than assumed: Italian writes the decimal with a comma and
+    Italian prose is where `4.5` gives itself away as a version rather than a
+    quantity, while in English the same `4.5` is an ordinary decimal and
+    reading it as one is correct. Hard-coding either answer would have made
+    the rule right in one language and wrong in the next.
+    """
+    try:
+        locale = Locale.parse(language_code(language))
+        decimal = str(get_decimal_symbol(locale))
+        group = str(get_group_symbol(locale))
+    except Exception:  # noqa: BLE001 - an unknown locale is not worth a crash
+        decimal, group = ".", ","
+    d, g = re.escape(decimal), re.escape(group)
+    return re.compile(rf"^[+-]?(?:\d+|\d{{1,3}}(?:{g}\d{{3}})+)(?:{d}\d+)?$")
+
+
+def is_word(core: str) -> bool:
+    """A run of letters, with the punctuation that can sit inside one.
+
+    Internal punctuation is allowed because a word can legitimately carry it
+    -- `l'accuratezza`, `e-mail` -- and because a script that writes without
+    spaces puts its commas inside what whitespace hands us as a single token.
+    A Japanese clause arrives here whole, and it is a sequence of words.
+
+    The edges are what the rule turns on: a token that opens on punctuation is
+    a flag (`--model`), not a word.
+    """
+    if not core or not (core[0].isalpha() and core[-1].isalpha()):
+        return False
+    return all(
+        c.isalpha() or unicodedata.category(c).startswith("M") or is_speakable_char(c) for c in core
+    )
+
+
+def is_number(core: str, language: str) -> bool:
+    return bool(_number_re(language).match(core))
 
 
 @cache
@@ -118,6 +150,21 @@ def is_speakable_char(char: str) -> bool:
     return any(concept in name for concept in PUNCTUATION_CONCEPTS)
 
 
+# Punctuation that can sit on either side of a token without being part of it:
+# quotes, brackets, and the marks that end a sentence. Derived from the same
+# concepts as the character rule, so it covers every script's forms -- the
+# whole basic plane is scanned, because CJK punctuation lives above U+3000 and
+# a shorter scan silently left every Japanese sentence looking like notation.
+#
+# Dashes are excluded on purpose: they are never stripped from an edge, so a
+# token that opens on one stays recognizable as a flag rather than a word.
+EDGE_PUNCTUATION = "".join(
+    chr(c)
+    for c in range(0x10000)
+    if is_speakable_char(chr(c)) and not chr(c).isalnum() and unicodedata.category(chr(c)) != "Pd"
+)
+
+
 def unspeakable_chars(text: str) -> list[str]:
     """Every distinct character in `text` a voice cannot read, in order."""
     seen: dict[str, None] = {}
@@ -125,10 +172,6 @@ def unspeakable_chars(text: str) -> list[str]:
         if not is_speakable_char(char):
             seen.setdefault(char, None)
     return list(seen)
-
-
-def has_versioned_name(text: str) -> bool:
-    return any(m.group(1)[0].isupper() for m in VERSIONED_NAME_RE.finditer(text))
 
 
 @cache
@@ -170,53 +213,81 @@ def foreign_letters(text: str) -> list[str]:
     return list(seen)
 
 
-def has_dash_run(text: str) -> bool:
-    return bool(DASH_RUN_RE.search(text))
+def unspeakable_tokens(text: str, language: str = TARGET_LANGUAGE) -> list[str]:
+    """The tokens in `text` that are neither a word, a number, nor punctuation.
+
+    This is the whole rule. `30B`, `5:1`, `20-40`, `Qwen3.5`, `--model`,
+    `AGENTS.md`, `https://github.com/x`, `≤`, `█` are all caught by it, and
+    none of them is named anywhere: each simply fails to be one of the three
+    things speech is made of.
+
+    It replaced two hand-written patterns -- one for a run of dashes, one for
+    a name carrying a version number -- that between them caught two cases and
+    missed every other. Patterns like those accumulate: the denylist this
+    module exists to avoid grew exactly that way, one observed failure at a
+    time.
+    """
+    found: dict[str, None] = {}
+    for token in text.split():
+        core = token.strip(EDGE_PUNCTUATION)
+        # A token of nothing but dashes is an em dash doing punctuation's job.
+        # Dashes are never stripped from an edge, so `--model` keeps the pair
+        # that gives it away as a flag rather than a word.
+        if not core or core.strip(WORD_JOINERS) == "":
+            continue
+        # A number the way this language writes numbers is already speech.
+        if is_number(core, language):
+            continue
+        # A digit touching anything else is notation: `30B` is a magnitude,
+        # `5:1` a ratio, `20-40` a range, `Qwen3.5` a version. None of them is
+        # named here -- what they have in common is that a digit is joined to
+        # something that is not part of a number in this language.
+        if any(c.isdigit() for c in core):
+            found.setdefault(core, None)
+            continue
+        if not is_word(core):
+            found.setdefault(core, None)
+    return list(found)
 
 
-def needs_llm(text: str) -> bool:
+def needs_llm(text: str, language: str = TARGET_LANGUAGE) -> bool:
     """Whether this passage has anything a speech engine cannot be handed.
 
-    True means one LLM call. On a corpus of real translated blocks this fires
-    on about one block in five, so the common case stays free.
+    Two questions, and both are asked of the writing system rather than of a
+    list: is every token a word, a number or punctuation, and is every letter
+    one that belongs to the prose around it.
     """
-    return (
-        bool(unspeakable_chars(text))
-        or bool(foreign_letters(text))
-        or has_dash_run(text)
-        or has_versioned_name(text)
-    )
+    return bool(unspeakable_tokens(text, language)) or bool(foreign_letters(text))
 
 
-def describe_unspeakable(text: str) -> str:
+def describe_unspeakable(text: str, language: str = TARGET_LANGUAGE) -> str:
     """Why `needs_llm` fired, in words, for a log line and for the prompt.
 
     The model is told what tripped the check rather than left to find it: on a
     retry that is the only new information there is to give it.
     """
     parts = []
-    chars = unspeakable_chars(text)
-    if chars:
+    tokens = unspeakable_tokens(text, language)
+    if tokens:
         parts.append(
-            "characters that are not letters, digits, spaces or punctuation: "
-            + ", ".join(f"{c} ({unicodedata.name(c, 'unnamed')})" for c in chars)
+            "tokens that are neither a word nor a number: " + ", ".join(repr(t) for t in tokens)
         )
+        chars = unspeakable_chars(" ".join(tokens))
+        if chars:
+            parts.append(
+                "including characters that are not letters, digits or punctuation: "
+                + ", ".join(f"{c} ({unicodedata.name(c, 'unnamed')})" for c in chars)
+            )
     foreign = foreign_letters(text)
     if foreign:
         parts.append(
             "letters from a different script than the surrounding prose, which are notation "
             "rather than words here: " + ", ".join(foreign)
         )
-    if has_dash_run(text):
-        parts.append(
-            "a run of two or more dashes, which is a flag or a drawn rule, not punctuation"
-        )
-    if has_versioned_name(text):
-        parts.append("a name followed by a dotted version number, which must be read as a version")
     return "; ".join(parts)
 
 
-def strip_unspeakable(text: str) -> str:
+def strip_unspeakable(text: str, language: str = TARGET_LANGUAGE) -> str:
     """Last resort: drop what could not be turned into words.
 
     Whole whitespace-delimited tokens go, not individual characters. Deleting
@@ -235,7 +306,7 @@ def strip_unspeakable(text: str) -> str:
 
     def drop_token(match: re.Match) -> str:
         token = match.group(0)
-        return "" if unspeakable_chars(token) or has_dash_run(token) else token
+        return "" if unspeakable_tokens(token, language) else token
 
     text = re.sub(r"\S+", drop_token, text)
 

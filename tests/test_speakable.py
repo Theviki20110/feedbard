@@ -12,6 +12,7 @@ from feedbard.pipeline.speakable import (
     needs_llm,
     strip_unspeakable,
     unspeakable_chars,
+    unspeakable_tokens,
 )
 
 
@@ -62,42 +63,60 @@ def test_a_foreign_letter_is_notation_but_its_own_script_is_prose():
 
 
 @pytest.mark.parametrize(
-    "text",
+    "text, token",
     [
-        "DeepSeek 4.5 è uscito",
-        "GPT-4.5 ha vinto",
-        # Glued straight on, which is how most model names are written. The
-        # rule used to demand a space or a hyphen and missed every one of
-        # these -- 114 blocks of the shipped corpus.
-        "il modello V3.2 è nuovo",
-        "Qwen3.5 batte K2.5",
-        "MiniMax M2.1 e GLM-4.7",
+        # A version, glued to its name or not. Read as a quantity it is a
+        # different number, and where the dot groups thousands, a wrong one.
+        ("DeepSeek 4.5 è uscito", "4.5"),
+        ("Qwen3.5 batte tutti", "Qwen3.5"),
+        ("il modello V3.2 è nuovo", "V3.2"),
+        # A magnitude: the letter is a word, not a letter.
+        ("un modello da 30B parametri", "30B"),
+        ("contesto da 32k token", "32k"),
+        # A relation between two numbers, whatever joins them.
+        ("il rapporto resta di 5:1", "5:1"),
+        ("servono tra 20-40 epoche", "20-40"),
+        # A flag: it opens on punctuation, so it is not a word.
+        ("usa il flag --model per scegliere", "--model"),
     ],
 )
-def test_a_versioned_name_is_caught_although_every_character_is_allowed(text):
-    # "4.5" read as a decimal is a different number, and in a locale where the
-    # dot separates thousands it is a very different one.
-    assert unspeakable_chars(text) == []
+def test_a_token_that_is_neither_a_word_nor_a_number_is_notation(text, token):
+    # None of these is named in the code. Each one simply fails to be one of
+    # the three things speech is made of.
     assert needs_llm(text)
+    assert token in unspeakable_tokens(text)
 
 
 @pytest.mark.parametrize(
     "text",
     [
-        "l'accuratezza è salita al 95.3 per cento",
-        "circa 3.5 milioni di token",
-        "il valore 0.5 resta invariato",
+        # Written the way the language writes numbers, so already speech.
+        "l'accuratezza è salita a 95,3 punti",
+        "nel 2024 sono usciti molti modelli",
+        "circa 3 milioni di token",
+        # A word carrying the punctuation a word can carry.
+        "una e-mail e l'accuratezza restano",
+        "un inciso — come questo — nel mezzo",
     ],
 )
-def test_a_plain_decimal_is_left_alone(text):
-    # The capitalization of the name is what separates a version from a
-    # metric: with the separator optional, "al 95.3" would otherwise match.
+def test_words_and_numbers_are_left_alone(text):
     assert not needs_llm(text)
 
 
+def test_the_decimal_separator_comes_from_the_language_not_from_a_guess():
+    # `4.5` is a decimal in English and reads correctly as one. In Italian the
+    # dot groups thousands, so the same token is a version or an untranslated
+    # number -- either way something only the model can resolve. Asking CLDR
+    # gives the right answer in both without either being written down here.
+    assert not needs_llm("the score rose to 4.5 points", "English")
+    assert needs_llm("il punteggio sale a 4.5 punti", "Italian")
+
+
 def test_the_reason_is_reported_for_the_prompt_and_the_log():
-    reason = describe_unspeakable("il codice https://x.com/a e σ con DeepSeek 4.5")
-    assert "SOLIDUS" in reason and "σ" in reason and "version" in reason
+    reason = describe_unspeakable("il codice https://x.com/a e σ con 30B parametri")
+    assert "https://x.com/a" in reason and "30B" in reason
+    assert "SOLIDUS" in reason
+    assert "σ" in reason
 
 
 # --- last resort ------------------------------------------------------------

@@ -76,6 +76,13 @@ else:
 
 
 
+def language_code(language: str) -> str:
+    """The short code for any spelling of `language`, for libraries that want
+    a locale rather than a name."""
+    resolved = _resolve(language)
+    return resolved.language if resolved is not None else language
+
+
 def display_name(language: str) -> str:
     """The English name for any spelling of `language`, for prompt templates.
 
