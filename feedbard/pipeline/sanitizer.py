@@ -135,11 +135,20 @@ def sanitize_chunk(
         )
 
     scrubbed = strip_unspeakable(current)
-    logger.warning(
-        "sanitize block %d: giving up after %d attempt(s), deleting what could not be spoken: %s",
+    # Error, not warning, and with both texts. This path deletes whole tokens
+    # rather than replacing them with words, so what reaches the listener is a
+    # mutilated sentence ("complessità da a O(n)") rather than a
+    # mispronounced symbol. That is harder to catch by ear than the failure it
+    # replaced, and the shard on disk keeps no record of what was removed, so
+    # the log line is the only trace there is.
+    logger.error(
+        "sanitize block %d: giving up after %d attempt(s) and deleting what could not be "
+        "spoken (%s)\n  before: %r\n  after:  %r",
         index,
         MAX_ATTEMPTS,
         describe_unspeakable(current) or "a version number",
+        current,
+        scrubbed,
     )
     return scrubbed
 

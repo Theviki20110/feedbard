@@ -6,6 +6,8 @@ call: that a clean answer is taken, a dirty one is challenged once, and a
 model that never produces speakable text cannot put a symbol on the wire.
 """
 
+import logging
+
 import pytest
 
 from feedbard.ingestion.html_parser import Block, Document, Kind
@@ -175,3 +177,21 @@ def test_the_preceding_block_is_offered_as_context(monkeypatch, shards):
     sanitize_blocks(doc, "Articolo", max_workers=1)
 
     assert "Il primo paragrafo introduce sigma." in model.calls[0]
+
+
+def test_giving_up_is_reported_at_error_level_with_both_texts(monkeypatch, caplog):
+    """The one trace there is that a sentence was mutilated.
+
+    This path deletes whole tokens rather than replacing them with words, so
+    the listener hears a broken sentence rather than a mispronounced symbol --
+    harder to catch by ear, and the shard on disk keeps no record of what was
+    removed.
+    """
+    monkeypatch.setattr(sanitizer, "generate_response", _model("ancora ⟪sporco⟫", "⟪ancora⟫"))
+
+    with caplog.at_level(logging.ERROR):
+        out = sanitize_chunk("complessità da O(n²) a O(n)", 7)
+
+    record = next(r for r in caplog.records if r.levelno >= logging.ERROR)
+    assert "before:" in record.getMessage() and "after:" in record.getMessage()
+    assert repr(out) in record.getMessage()
