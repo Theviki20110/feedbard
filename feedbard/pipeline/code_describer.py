@@ -35,6 +35,42 @@ from feedbard.pipeline.sanitizer import is_effectively_empty
 
 CODE_PROMPT_PATH = ASSETS_DIR / "code_prompt.txt"
 
+# A model that hands the block back instead of describing it. Observed on a
+# ```python fence and on an `ollama run` transcript: the reply was the source,
+# verbatim, and since it is neither empty nor a refusal every check passed and
+# it reached the speech engine as if it were prose.
+#
+# A description that quotes a whole line of the source is not a description.
+# Shorter runs are left alone: a description may legitimately name a function
+# or a flag, and dropping the block is destructive enough that the signal has
+# to be unambiguous.
+ECHO_LINE_CHARS = 16
+
+# The same judgement for a block whose every line is shorter than that. A
+# description that contains the whole block, run together, is reproducing it
+# however short its lines are.
+ECHO_BLOCK_CHARS = 8
+
+# One retry. Echoing is sampled like any other bad draw, and asking again is
+# far cheaper than losing the block.
+MAX_ECHO_RETRIES = 1
+
+
+def _flatten(text: str) -> str:
+    return " ".join(text.split())
+
+
+def is_echo(code: str, description: str) -> bool:
+    """Whether `description` reproduces `code` rather than describing it."""
+    flat = _flatten(description)
+    whole = _flatten(code)
+    if len(whole) >= ECHO_BLOCK_CHARS and whole in flat:
+        return True
+    return any(
+        len(line) >= ECHO_LINE_CHARS and line in flat
+        for line in (_flatten(raw) for raw in code.splitlines())
+    )
+
 
 def code_id(code: str) -> str:
     return hashlib.sha256(code.encode("utf-8")).hexdigest()[:10]
@@ -81,19 +117,39 @@ def describe_code(
 
 def _describe_or_drop(block, title: str, language: str) -> None:
     cid = code_id(block.text)
-    try:
-        description = describe_code(block.text, block.lang, title, language)
-    except (RuntimeError, ValueError):
+    for attempt in range(MAX_ECHO_RETRIES + 1):
+        try:
+            description = describe_code(block.text, block.lang, title, language)
+        except (RuntimeError, ValueError):
+            logger.warning(
+                "describe_code failed for %s, dropping the block from narration", cid, exc_info=True
+            )
+            block.description = None
+            return
+
+        if not description:
+            block.description = None
+            return
+
+        if not is_echo(block.text, description):
+            block.description = description
+            save_code_shard(cid, description, language)
+            return
+
         logger.warning(
-            "describe_code failed for %s, dropping the block from narration", cid, exc_info=True
+            "describe_code %s: reply %d/%d reproduced the block instead of describing it: %r",
+            cid,
+            attempt + 1,
+            MAX_ECHO_RETRIES + 1,
+            description[:200],
         )
-        block.description = None
-        return
-    if not description:
-        block.description = None
-        return
-    block.description = description
-    save_code_shard(cid, description, language)
+
+    # Dropped rather than narrated: code read out character by character
+    # carries nothing a listener can use, so silence is the safer failure.
+    logger.error(
+        "describe_code %s: every reply echoed the source; dropping the block from narration", cid
+    )
+    block.description = None
 
 
 def describe_code_blocks(
