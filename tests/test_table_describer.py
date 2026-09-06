@@ -89,6 +89,23 @@ def test_an_llm_error_falls_back_to_reading_the_rows(monkeypatch, tmp_path):
     assert "41.2" in doc.blocks[0].description
 
 
+def test_a_network_error_also_falls_back_to_reading_the_rows(monkeypatch, tmp_path):
+    # Not every LLM-call failure is a ModelRefusedError/RuntimeError: a
+    # dropped connection or an HTTP error from the backend must degrade the
+    # same way, instead of aborting the whole article.
+    monkeypatch.setattr(table_describer, "TABLE_SHARDS_DIR", tmp_path)
+    monkeypatch.setattr(table_describer, "table_shard_path", lambda tid: tmp_path / f"{tid}.json")
+
+    def boom(prompt):
+        raise ConnectionError("connection refused")
+
+    monkeypatch.setattr(table_describer, "generate_response", boom)
+
+    doc = _doc(ROWS)
+    describe_tables(doc)
+    assert "41.2" in doc.blocks[0].description
+
+
 def test_large_tables_are_truncated_for_the_prompt(monkeypatch, tmp_path):
     monkeypatch.setattr(table_describer, "TABLE_SHARDS_DIR", tmp_path)
     monkeypatch.setattr(table_describer, "table_shard_path", lambda tid: tmp_path / f"{tid}.json")

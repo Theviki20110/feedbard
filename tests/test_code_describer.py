@@ -76,6 +76,23 @@ def test_an_llm_error_drops_the_block(monkeypatch, tmp_path):
     assert doc.blocks[0].description is None
 
 
+def test_a_network_error_also_drops_the_block(monkeypatch, tmp_path):
+    # Not every LLM-call failure is a ModelRefusedError/RuntimeError: a
+    # dropped connection or an HTTP error from the backend must degrade the
+    # same way, instead of aborting the whole article.
+    monkeypatch.setattr(code_describer, "CODE_SHARDS_DIR", tmp_path)
+    monkeypatch.setattr(code_describer, "code_shard_path", lambda cid: tmp_path / f"{cid}.json")
+
+    def boom(prompt):
+        raise ConnectionError("connection refused")
+
+    monkeypatch.setattr(code_describer, "generate_response", boom)
+
+    doc = _doc(CODE)
+    describe_code_blocks(doc)
+    assert doc.blocks[0].description is None
+
+
 def test_blocks_without_text_are_skipped(monkeypatch):
     monkeypatch.setattr(
         code_describer, "generate_response", lambda prompt: (_ for _ in ()).throw(AssertionError)

@@ -113,11 +113,9 @@ def test_process_feeds_processes_every_item_in_order(stages):
     assert stages.count("extract") == 3
 
 
-def test_process_feeds_stops_at_the_first_failing_item(monkeypatch, stages):
-    """Documents current behaviour: process_feeds has no per-item error
-    isolation, so one broken article aborts every item after it in the same
-    batch -- a real gap, not a feature, tracked here so a future fix changes
-    this test on purpose rather than by surprise."""
+def test_process_feeds_skips_a_failing_item_and_continues(monkeypatch, stages):
+    """process_feeds isolates errors per item: one broken article is logged
+    and skipped, never stopping the items after it in the same batch."""
     calls = []
 
     def flaky_extract(html):
@@ -129,7 +127,7 @@ def test_process_feeds_stops_at_the_first_failing_item(monkeypatch, stages):
     monkeypatch.setattr(orchestrator, "extract", flaky_extract)
     items = [_item("Uno", text="a"), _item("Due", text="b"), _item("Tre", text="c")]
 
-    with pytest.raises(RuntimeError, match="boom"):
-        orchestrator.process_feeds(items)
+    results = orchestrator.process_feeds(items)
 
-    assert calls == ["a", "b"]  # the third item was never attempted
+    assert calls == ["a", "b", "c"]  # every item is attempted
+    assert results == ["dest.mp3", None, "dest.mp3"]

@@ -43,7 +43,7 @@ def test_only_the_filtered_new_urls_reach_the_pipeline(monkeypatch):
         return entries
 
     monkeypatch.setattr(app, "get_feeds", get_feeds)
-    monkeypatch.setattr(app, "process_feeds", lambda feeds: None)
+    monkeypatch.setattr(app, "process_feeds", lambda feeds: ["dest.mp3"] * len(feeds))
     marked = []
     monkeypatch.setattr(app, "mark_post_seen", lambda feed_url, url: marked.append(url))
 
@@ -67,7 +67,7 @@ def test_every_new_post_is_marked_seen_after_processing(monkeypatch):
         lambda feed_url, urls: ["https://a.example/1", "https://a.example/2"],
     )
     monkeypatch.setattr(app, "get_feeds", lambda entries: entries)
-    monkeypatch.setattr(app, "process_feeds", lambda feeds: None)
+    monkeypatch.setattr(app, "process_feeds", lambda feeds: ["dest.mp3"] * len(feeds))
     marked = []
     monkeypatch.setattr(app, "mark_post_seen", lambda feed_url, url: marked.append(url))
 
@@ -85,7 +85,12 @@ def test_processing_runs_before_marking_posts_seen(monkeypatch):
     monkeypatch.setattr(app, "get_post_entries_v2", lambda url: _entries("https://a.example/1"))
     monkeypatch.setattr(app, "filter_new_posts", lambda feed_url, urls: ["https://a.example/1"])
     monkeypatch.setattr(app, "get_feeds", lambda entries: entries)
-    monkeypatch.setattr(app, "process_feeds", lambda feeds: order.append("process_feeds"))
+
+    def process_feeds(feeds):
+        order.append("process_feeds")
+        return ["dest.mp3"] * len(feeds)
+
+    monkeypatch.setattr(app, "process_feeds", process_feeds)
     monkeypatch.setattr(
         app, "mark_post_seen", lambda feed_url, url: order.append("mark_post_seen")
     )
@@ -130,3 +135,77 @@ def test_init_db_runs_before_any_feed_is_read(monkeypatch):
     app.check_and_run()
 
     assert order == ["init_db", "read_feed_urls"]
+
+
+def test_a_failed_fetch_does_not_block_the_rest_of_the_batch(monkeypatch):
+    # get_feeds marks a post whose fetch failed (every strategy exhausted)
+    # with None; it must not stop the other posts in the same feed from
+    # being processed and marked seen.
+    monkeypatch.setattr(app, "init_db", lambda: None)
+    monkeypatch.setattr(app, "read_feed_urls", lambda: ["https://feed.example/rss"])
+    monkeypatch.setattr(
+        app,
+        "get_post_entries_v2",
+        lambda url: _entries("https://a.example/1", "https://a.example/2"),
+    )
+    monkeypatch.setattr(
+        app,
+        "filter_new_posts",
+        lambda feed_url, urls: ["https://a.example/1", "https://a.example/2"],
+    )
+    monkeypatch.setattr(app, "get_feeds", lambda entries: [None, entries[1]])
+    monkeypatch.setattr(app, "process_feeds", lambda feeds: ["dest.mp3"] * len(feeds))
+    marked = []
+    monkeypatch.setattr(app, "mark_post_seen", lambda feed_url, url: marked.append(url))
+
+    app.check_and_run()
+
+    assert marked == ["https://a.example/2"]
+
+
+def test_a_failed_pipeline_item_is_not_marked_seen(monkeypatch):
+    # process_feeds marks a post that failed mid-pipeline with None; only the
+    # posts that made it all the way through get marked seen.
+    monkeypatch.setattr(app, "init_db", lambda: None)
+    monkeypatch.setattr(app, "read_feed_urls", lambda: ["https://feed.example/rss"])
+    monkeypatch.setattr(
+        app,
+        "get_post_entries_v2",
+        lambda url: _entries("https://a.example/1", "https://a.example/2"),
+    )
+    monkeypatch.setattr(
+        app,
+        "filter_new_posts",
+        lambda feed_url, urls: ["https://a.example/1", "https://a.example/2"],
+    )
+    monkeypatch.setattr(app, "get_feeds", lambda entries: entries)
+    monkeypatch.setattr(app, "process_feeds", lambda feeds: [None, "dest.mp3"])
+    marked = []
+    monkeypatch.setattr(app, "mark_post_seen", lambda feed_url, url: marked.append(url))
+
+    app.check_and_run()
+
+    assert marked == ["https://a.example/2"]
+
+
+def test_a_broken_feed_does_not_stop_the_next_feed(monkeypatch):
+    monkeypatch.setattr(app, "init_db", lambda: None)
+    monkeypatch.setattr(
+        app, "read_feed_urls", lambda: ["https://a.example/rss", "https://b.example/rss"]
+    )
+
+    def get_post_entries_v2(url):
+        if url == "https://a.example/rss":
+            raise RuntimeError("feed unreachable")
+        return _entries("https://b.example/1")
+
+    monkeypatch.setattr(app, "get_post_entries_v2", get_post_entries_v2)
+    monkeypatch.setattr(app, "filter_new_posts", lambda feed_url, urls: urls)
+    monkeypatch.setattr(app, "get_feeds", lambda entries: entries)
+    monkeypatch.setattr(app, "process_feeds", lambda feeds: ["dest.mp3"] * len(feeds))
+    marked = []
+    monkeypatch.setattr(app, "mark_post_seen", lambda feed_url, url: marked.append(url))
+
+    app.check_and_run()
+
+    assert marked == ["https://b.example/1"]

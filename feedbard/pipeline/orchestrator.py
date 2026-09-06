@@ -69,6 +69,19 @@ def process_item(item: dict) -> str:
     return dest
 
 
-def process_feeds(items: list[dict]) -> list[str]:
+def process_feeds(items: list[dict]) -> list[str | None]:
+    """Process every item; a failing one is logged and skipped rather than
+    aborting every item after it in the same batch. Result is aligned by
+    index with `items`, None marking a skipped one, so a caller can tell
+    which entries actually finished and are safe to mark seen."""
     logger.info("process_feeds: %d item(s)", len(items))
-    return [process_item(item) for item in items]
+    results: list[str | None] = []
+    for item in items:
+        try:
+            results.append(process_item(item))
+        except Exception:
+            logger.error(
+                "[%s] process_item failed, skipping", item.get("title"), exc_info=True
+            )
+            results.append(None)
+    return results

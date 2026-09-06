@@ -354,7 +354,9 @@ def repair_chunk(text: str, index: int, target_language: str, title: str = "") -
     try:
         repaired, elapsed = generate_response(prompt)
         logger.info("Repair chunk %d completed in %.2f seconds", index, elapsed)
-    except RuntimeError as exc:
+    except Exception as exc:
+        # Not just RuntimeError: a transient network/API failure must fall
+        # back to the scrubbed text the same way a truncation would.
         logger.warning("repair block %d: LLM call failed (%s); keeping scrubbed text", index, exc)
         return text
 
@@ -407,7 +409,10 @@ def sanitize_chunk(
         sanitized, elapsed = generate_response(prompt)
         logger.info("Sanitize chunk %d completed in %.2f seconds", index, elapsed)
         check_usable(sanitized, "sanitize", index, source=marked)
-    except (ModelRefusedError, RuntimeError) as exc:
+    except Exception as exc:
+        # Not just ModelRefusedError/RuntimeError: a transient network/API
+        # failure must fall back to the scrub-only path the same way a
+        # refusal does, or it aborts the whole article instead of one block.
         logger.warning(
             "sanitize block %d: LLM pass unusable (%s); falling back to scrub only", index, exc
         )

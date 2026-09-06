@@ -31,7 +31,7 @@ from feedbard.llm_client import generate_response
 from feedbard.logger import logger
 from feedbard.paths import ASSETS_DIR, CODE_SHARDS_DIR, code_shard_path
 from feedbard.pipeline.lexicon import TARGET_LANGUAGE
-from feedbard.pipeline.sanitizer import ModelRefusedError, check_usable
+from feedbard.pipeline.sanitizer import check_usable
 
 CODE_PROMPT_PATH = ASSETS_DIR / "code_prompt.txt"
 
@@ -80,7 +80,10 @@ def _describe_or_drop(block, title: str, language: str) -> None:
     cid = code_id(block.text)
     try:
         description = describe_code(block.text, block.lang, title, language)
-    except (ModelRefusedError, RuntimeError, ValueError):
+    except Exception:
+        # Not just ModelRefusedError: a transient network/API failure (Ollama
+        # down, a throttled Anthropic/Bedrock call) must degrade the same way
+        # a refusal does, or it aborts the whole article instead of one block.
         logger.warning(
             "describe_code failed for %s, dropping the block from narration", cid, exc_info=True
         )

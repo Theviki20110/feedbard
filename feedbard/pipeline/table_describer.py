@@ -28,7 +28,7 @@ from feedbard.llm_client import generate_response
 from feedbard.logger import logger
 from feedbard.paths import ASSETS_DIR, TABLE_SHARDS_DIR, table_shard_path
 from feedbard.pipeline.lexicon import TARGET_LANGUAGE
-from feedbard.pipeline.sanitizer import ModelRefusedError, check_usable
+from feedbard.pipeline.sanitizer import check_usable
 
 TABLE_PROMPT_PATH = ASSETS_DIR / "table_prompt.txt"
 
@@ -92,7 +92,10 @@ def _describe_or_flatten(block, title: str, language: str) -> None:
     tid = table_id(block.rows)
     try:
         description = describe_table(block.rows, title, language)
-    except (ModelRefusedError, RuntimeError, ValueError):
+    except Exception:
+        # Not just ModelRefusedError: a transient network/API failure (Ollama
+        # down, a throttled Anthropic/Bedrock call) must degrade the same way
+        # a refusal does, or it aborts the whole article instead of one table.
         logger.warning(
             "describe_table failed for %s, falling back to reading the rows out",
             tid,

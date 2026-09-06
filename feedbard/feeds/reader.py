@@ -208,6 +208,17 @@ def _build_feed_item(entry: dict) -> dict:
     }
 
 
-def get_feeds(entries: list[dict]) -> list[dict]:
+def _safe_build_feed_item(entry: dict) -> dict | None:
+    try:
+        return _build_feed_item(entry)
+    except Exception:
+        # Every fetch_article strategy failed for this entry: skip it rather
+        # than losing every other entry in the same batch to one bad post.
+        logger.warning("fetch failed for %s, skipping", entry.get("url"), exc_info=True)
+        return None
+
+
+def get_feeds(entries: list[dict]) -> list[dict | None]:
+    """Aligned by index with `entries`; None marks one that failed to fetch."""
     with ThreadPoolExecutor(max_workers=8) as executor:
-        return list(executor.map(_build_feed_item, entries))
+        return list(executor.map(_safe_build_feed_item, entries))

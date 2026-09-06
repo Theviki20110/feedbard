@@ -274,6 +274,38 @@ def test_sanitize_chunk_routes_a_versioned_name_through_the_llm(monkeypatch):
     assert "quattro punto cinque" in out
 
 
+def test_sanitize_falls_back_to_scrub_on_a_network_error(monkeypatch):
+    # Not every LLM-call failure is a ModelRefusedError/RuntimeError: a
+    # dropped connection or an HTTP error from the backend must fall back to
+    # the scrub-only path the same way, instead of aborting the whole article.
+    def generate_response(prompt):
+        raise ConnectionError("connection refused")
+
+    monkeypatch.setattr(sanitizer, "generate_response", generate_response)
+    out = sanitize_chunk("il parametro enable_thinking=True è attivo", index=0)
+    assert "uguale a" in out
+
+
+def test_repair_keeps_scrubbed_text_on_a_network_error(monkeypatch):
+    # Both the sanitize call and the repair call fail on the same kind of
+    # error; the block still ends up with the mechanically scrubbed text
+    # instead of an unhandled exception.
+    calls = []
+
+    def generate_response(prompt):
+        calls.append(prompt)
+        raise ConnectionError("connection refused")
+
+    monkeypatch.setattr(sanitizer, "generate_response", generate_response)
+    chunk = (
+        "se hai clonato gli script da https://github.com/rasbt/evals, "
+        "possiamo eseguire quanto segue."
+    )
+    out = sanitize_chunk(chunk, index=0)
+    assert out == SCRUBBED
+    assert len(calls) == 2  # sanitize attempt, then the repair attempt
+
+
 def test_no_repair_call_without_links(monkeypatch):
     monkeypatch.setattr(sanitizer, "generate_response", _fake_llm("mai chiamato"))
     calls = []
