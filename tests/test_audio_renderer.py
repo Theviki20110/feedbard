@@ -41,6 +41,9 @@ def test_call_tts_http_posts_the_configured_language_and_voice(monkeypatch):
     assert seen["json"]["language"] == audio_renderer.TTS_LANGUAGE_CODE
     assert seen["json"]["predefined_voice_id"] == audio_renderer.TTS_VOICE_ID
     assert seen["json"]["text"] == "ciao mondo"
+    # generate_audio_from_blocks concatenates raw bytes into a .mp3; wav
+    # blocks glued together aren't valid audio, so this must stay mp3.
+    assert seen["json"]["output_format"] == "mp3"
 
 
 def test_call_tts_http_accepts_a_voice_override(monkeypatch):
@@ -107,6 +110,7 @@ def test_call_tts_voxcpm_sends_the_model_and_ref_audio(monkeypatch):
     assert seen["json"]["model"] == audio_renderer.VOXCPM_MODEL
     assert seen["json"]["ref_audio"] == "data:audio/wav;base64,x"
     assert seen["json"]["input"] == "ciao mondo"
+    assert seen["json"]["response_format"] == "mp3"
 
 
 def test_get_voxcpm_ref_audio_requires_the_env_var(monkeypatch):

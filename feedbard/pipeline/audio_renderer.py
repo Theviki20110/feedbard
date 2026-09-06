@@ -98,7 +98,10 @@ def call_tts_http(text: str, voice_id: str = TTS_VOICE_ID) -> bytes:
     body = {
         "voice_mode": "predefined",
         "predefined_voice_id": voice_id,
-        "output_format": "wav",
+        # Blocks get concatenated by generate_audio_from_blocks and written
+        # straight into a .mp3 -- wav would need re-encoding, and raw
+        # concatenated wav headers aren't valid audio at all.
+        "output_format": "mp3",
         "split_text": True,
         "text": text,
         "language": TTS_LANGUAGE_CODE,
@@ -133,7 +136,9 @@ def call_tts_voxcpm(text: str) -> bytes:
             "model": VOXCPM_MODEL,
             "input": text,
             "ref_audio": _get_voxcpm_ref_audio(),
-            "response_format": "wav",
+            # Same reason as call_tts_http: blocks are concatenated raw into
+            # a .mp3, so the server must hand back mp3, not wav.
+            "response_format": "mp3",
         },
         timeout=180,
     )
