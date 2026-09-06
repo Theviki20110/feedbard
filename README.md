@@ -12,8 +12,9 @@ are already entitled to read, for your own use.
 Everything it produces is a derivative work of someone else's writing —
 translated, narrated, re-hosted. So:
 
-- Only add feeds whose terms allow it. `assets/feeds_list.txt` ships empty for
-  that reason; nothing is processed until you put URLs in it.
+- Only add feeds whose terms allow it. The feed list (`FEEDS_LIST_PATH`,
+  default `data/feeds_list.txt`) ships empty for that reason; nothing is
+  processed until you put URLs in it.
 - Paid or subscriber-only posts stay off the list unless the publisher's terms
   say otherwise.
 - Don't redistribute the output. That includes exposing the Audiobookshelf
@@ -27,16 +28,19 @@ Respecting all of this is the operator's responsibility, not the tool's.
 
 ```
 app.check_and_run()
-  ├─ feeds/reader.read_feed_urls()      assets/feeds_list.txt -> feed URLs
+  ├─ feeds/reader.read_feed_urls()      FEEDS_LIST_PATH -> feed URLs
   ├─ feeds/reader.get_post_entries_v2() feed -> entries (url, title, author,
   │                                     date, body if the feed carries one)
   ├─ feeds/store.filter_new_posts()     drop entries already seen (sqlite)
+  ├─ (cap new entries to MAX_POSTS_PER_RUN)  keep one cron tick from turning
+  │                                     a feed's backlog into an hours-long run
   ├─ feeds/reader.get_feeds()           ingestion/fetcher -> article HTML + cover
   ├─ pipeline/orchestrator.process_feeds()
   │    for each item:
   │      ├─ ingestion/html_parser.extract()          HTML -> typed blocks + visuals
   │      ├─ pipeline/visual_describer.describe_visuals()  LLM vision -> classify/describe images
   │      ├─ pipeline/table_describer.describe_tables()    LLM -> a table read as prose
+  │      ├─ pipeline/code_describer.describe_code_blocks() LLM -> code/diagram read as prose
   │      ├─ pipeline/narration.attach_descriptions()      descriptions -> the block stream
   │      ├─ pipeline/translator.translate_blocks()        LLM -> translated blocks
   │      ├─ pipeline/sanitizer.sanitize_blocks()          LLM + scrub -> speakable text
@@ -74,6 +78,10 @@ the publication host), so nothing downstream knows where an article came from.
 Adding a publisher-specific strategy means writing one function returning
 `Article | None` and putting it in `STRATEGIES` before the generic ones.
 
+Requests to `huggingface.co` carry an `Authorization: Bearer` header when
+`HF_TOKEN` is set — that host rate-limits unauthenticated requests hard
+enough to trip the 429 retry loop otherwise.
+
 ## On-disk layout
 
 Everything lives under `DATA_DIR` (default `data/`), split by how long the
@@ -91,7 +99,8 @@ data/
     speech/     speech-ready text, per block    │ any of it costs money to
     audio/      synthesized audio, per block    │ rebuild but loses nothing
     visual/     image class + description       │
-    table/      spoken description, per table  ─┘
+    table/      spoken description, per table    │
+    code/       spoken description, per code block ─┘
 ```
 
 Episodes, covers, and the text/speech/audio shards are all named from the
@@ -150,8 +159,8 @@ cp .env.example .env   # fill in the values
 ```
 
 Required env vars are documented in `.env.example`. Then put one feed URL per
-line in `assets/feeds_list.txt` (empty by default — see **Intended use**); a
-run with no feeds does nothing.
+line in the file `FEEDS_LIST_PATH` points at (default `data/feeds_list.txt`,
+empty by default — see **Intended use**); a run with no feeds does nothing.
 
 `.env` holds live credentials (model provider API keys, AWS keys). It is
 gitignored and excluded from the image build context — keep it that way. Scope
@@ -176,6 +185,12 @@ and the ASR QA step do (`it`). Point them at the same language explicitly:
   `TTS_PROVIDER=http` (also used by the ASR round-trip check).
 - `POLLY_VOICE_ID` / `POLLY_LANGUAGE_CODE` -- voice and BCP-47 code for
   `TTS_PROVIDER=polly`.
+- `VOXCPM_MODEL` / `VOXCPM_REF_AUDIO` -- model name and reference clip for
+  `TTS_PROVIDER=voxcpm` (VoxCPM2's OpenAI-compatible `/v1/audio/speech`).
+  The voice comes from `ref_audio`, a short wav used for zero-shot cloning,
+  not from a `voice` name: that field exists in the request schema but is
+  ignored unless it names a preset already registered on the server, so
+  without `VOXCPM_REF_AUDIO` every call invents a different speaker.
 
 Supporting a new language means adding one JSON file to `assets/lexicons/`
 -- `symbols` for single glyphs, `sequences` for ordered multi-character
@@ -186,7 +201,7 @@ narrated in the wrong language rather than silently dropped from a claim.
 
 ## What a listener hears that they cannot see
 
-Three kinds of content in an article are not prose, and each would be a silent
+Four kinds of content in an article are not prose, and each would be a silent
 gap in the episode if it were simply skipped:
 
 - **Figures.** The vision pass (`assets/visual_prompt.txt`) classifies each
@@ -194,12 +209,20 @@ gap in the episode if it were simply skipped:
   two, writes a short paragraph saying what it shows -- the takeaway of a
   chart, a formula read out in words. `decorativo` covers banners, logos, and
   header photos: those stay silent, because narrating them interrupts the
-  prose without adding anything.
+  prose without adding anything. SVG images (shields.io badges, arXiv/build
+  status) are classified `decorativo` without a vision call: they are vector,
+  not raster, so there is nothing for a vision model to look at.
 - **Tables.** A grid read cell by cell is unlistenable and a grid dropped
   takes its numbers with it, so an LLM restates it
   (`assets/table_prompt.txt`): small tables are read out in full, larger ones
   become the comparison they make plus the values that matter. If that call
   fails, the rows are read out flatly rather than lost.
+- **Code blocks.** Read character by character, code is unlistenable and
+  carries no information a listener can use, so an LLM describes what it does
+  or shows instead (`assets/code_prompt.txt`) -- this also catches a `<pre>`
+  block that is actually ASCII art (boxes, arrows) rather than runnable code.
+  If that call fails, the block is dropped from narration rather than read
+  raw.
 - **Footnotes.** The `[3]` marker is stripped mid-sentence -- a number there
   wrecks the prosody -- and the note's body is appended to the paragraph that
   cites it, so it is heard where the author put it.
@@ -239,7 +262,7 @@ The repair pass can improve a block, never replace it.
 ## Running
 
 ```
-uv run python cron_job.py     # single run (reads assets/feeds_list.txt)
+uv run python cron_job.py     # single run (reads FEEDS_LIST_PATH)
                               # empty feed list -> nothing to do
 ```
 

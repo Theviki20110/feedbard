@@ -431,7 +431,7 @@ def _sanitize_block(
 
 
 def sanitize_blocks(
-    document, title: str, target_language: str = TARGET_LANGUAGE, max_workers: int = 8
+    document, title: str, target_language: str = TARGET_LANGUAGE, max_workers: int = 2
 ):
     """Populate block.speech_text for every translated block.
 

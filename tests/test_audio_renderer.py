@@ -9,6 +9,7 @@ from feedbard.pipeline.audio_renderer import (
     call_tts,
     call_tts_http,
     call_tts_polly,
+    call_tts_voxcpm,
     generate_audio_from_blocks,
     generate_speech,
 )
@@ -84,6 +85,52 @@ def test_call_tts_polly_uses_the_configured_voice_and_language(monkeypatch):
 
 
 # --------------------------------------------------------------------------
+# call_tts_voxcpm
+# --------------------------------------------------------------------------
+
+
+def test_call_tts_voxcpm_sends_the_model_and_ref_audio(monkeypatch):
+    seen = {}
+
+    def fake_post(url, json, timeout):
+        seen["url"], seen["json"] = url, json
+        return SimpleNamespace(raise_for_status=lambda: None, content=b"wav-bytes")
+
+    monkeypatch.setattr(audio_renderer, "TTS_BASE_URL", "http://voxcpm.local")
+    monkeypatch.setattr(audio_renderer, "_get_voxcpm_ref_audio", lambda: "data:audio/wav;base64,x")
+    monkeypatch.setattr(audio_renderer.requests, "post", fake_post)
+
+    out = call_tts_voxcpm("ciao mondo")
+
+    assert out == b"wav-bytes"
+    assert seen["url"] == "http://voxcpm.local/v1/audio/speech"
+    assert seen["json"]["model"] == audio_renderer.VOXCPM_MODEL
+    assert seen["json"]["ref_audio"] == "data:audio/wav;base64,x"
+    assert seen["json"]["input"] == "ciao mondo"
+
+
+def test_get_voxcpm_ref_audio_requires_the_env_var(monkeypatch):
+    monkeypatch.setattr(audio_renderer, "VOXCPM_REF_AUDIO_PATH", "")
+    monkeypatch.setattr(audio_renderer, "_voxcpm_ref_audio", None)
+    with pytest.raises(RuntimeError, match="VOXCPM_REF_AUDIO"):
+        audio_renderer._get_voxcpm_ref_audio()
+
+
+def test_get_voxcpm_ref_audio_is_cached_across_calls(monkeypatch, tmp_path):
+    ref = tmp_path / "myvoice.wav"
+    ref.write_bytes(b"fake-wav-bytes")
+    monkeypatch.setattr(audio_renderer, "VOXCPM_REF_AUDIO_PATH", str(ref))
+    monkeypatch.setattr(audio_renderer, "_voxcpm_ref_audio", None)
+
+    first = audio_renderer._get_voxcpm_ref_audio()
+    ref.write_bytes(b"changed-after-first-read")
+    second = audio_renderer._get_voxcpm_ref_audio()
+
+    assert first == second
+    assert first.startswith("data:audio/wav;base64,")
+
+
+# --------------------------------------------------------------------------
 # call_tts: provider dispatch
 # --------------------------------------------------------------------------
 
@@ -92,6 +139,7 @@ def test_call_tts_dispatches_to_http(monkeypatch):
     monkeypatch.setattr(audio_renderer, "TTS_PROVIDER", "http")
     monkeypatch.setattr(audio_renderer, "call_tts_http", lambda text, voice_id: b"http")
     monkeypatch.setattr(audio_renderer, "call_tts_polly", _unreachable)
+    monkeypatch.setattr(audio_renderer, "call_tts_voxcpm", _unreachable)
     assert call_tts("testo") == b"http"
 
 
@@ -99,7 +147,16 @@ def test_call_tts_dispatches_to_polly(monkeypatch):
     monkeypatch.setattr(audio_renderer, "TTS_PROVIDER", "polly")
     monkeypatch.setattr(audio_renderer, "call_tts_polly", lambda text: b"polly")
     monkeypatch.setattr(audio_renderer, "call_tts_http", _unreachable)
+    monkeypatch.setattr(audio_renderer, "call_tts_voxcpm", _unreachable)
     assert call_tts("testo") == b"polly"
+
+
+def test_call_tts_dispatches_to_voxcpm(monkeypatch):
+    monkeypatch.setattr(audio_renderer, "TTS_PROVIDER", "voxcpm")
+    monkeypatch.setattr(audio_renderer, "call_tts_voxcpm", lambda text: b"voxcpm")
+    monkeypatch.setattr(audio_renderer, "call_tts_http", _unreachable)
+    monkeypatch.setattr(audio_renderer, "call_tts_polly", _unreachable)
+    assert call_tts("testo") == b"voxcpm"
 
 
 def test_call_tts_unsupported_provider_raises(monkeypatch):

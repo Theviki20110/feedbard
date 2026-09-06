@@ -1,6 +1,8 @@
+import base64
 import difflib
 import os
 import re
+from pathlib import Path
 
 import boto3
 import jiwer
@@ -60,7 +62,15 @@ POLLY_LANGUAGE_CODE = os.getenv("POLLY_LANGUAGE_CODE", "it-IT")
 TTS_LANGUAGE_CODE = os.getenv("TTS_LANGUAGE_CODE", "it")
 TTS_VOICE_ID = os.getenv("TTS_VOICE_ID", "Leonardo.wav")
 
+VOXCPM_MODEL = os.getenv("VOXCPM_MODEL", "openbmb/VoxCPM2")
+# Reference clip for voice cloning (used when TTS_PROVIDER=voxcpm). Without
+# it, VoxCPM2's zero-shot path invents a new speaker on every call: the
+# OpenAI-schema `voice` field is accepted but ignored unless it names a
+# preset actually registered on the server, so a fixed voice needs ref_audio.
+VOXCPM_REF_AUDIO_PATH = os.getenv("VOXCPM_REF_AUDIO", "")
+
 _polly_client = None
+_voxcpm_ref_audio: str | None = None
 
 
 def _get_polly_client():
@@ -68,6 +78,20 @@ def _get_polly_client():
     if _polly_client is None:
         _polly_client = boto3.client("polly", region_name=AWS_REGION)
     return _polly_client
+
+
+def _get_voxcpm_ref_audio() -> str:
+    """Base64 data URI of the reference clip, read once per process and
+    reused for every block so the whole episode keeps the same voice."""
+    global _voxcpm_ref_audio
+    if _voxcpm_ref_audio is None:
+        if not VOXCPM_REF_AUDIO_PATH:
+            raise RuntimeError(
+                "VOXCPM_REF_AUDIO is not set; point it at a reference wav for voice cloning"
+            )
+        encoded = base64.b64encode(Path(VOXCPM_REF_AUDIO_PATH).read_bytes()).decode("ascii")
+        _voxcpm_ref_audio = f"data:audio/wav;base64,{encoded}"
+    return _voxcpm_ref_audio
 
 
 def call_tts_http(text: str, voice_id: str = TTS_VOICE_ID) -> bytes:
@@ -99,12 +123,34 @@ def call_tts_polly(text: str) -> bytes:
     return response["AudioStream"].read()
 
 
+def call_tts_voxcpm(text: str) -> bytes:
+    """VoxCPM2's OpenAI-compatible endpoint. Voice comes from ref_audio, not
+    from a `voice` name: that field is accepted by the schema but ignored
+    unless it names a preset registered on the server."""
+    response = requests.post(
+        f"{TTS_BASE_URL}/v1/audio/speech",
+        json={
+            "model": VOXCPM_MODEL,
+            "input": text,
+            "ref_audio": _get_voxcpm_ref_audio(),
+            "response_format": "wav",
+        },
+        timeout=180,
+    )
+    response.raise_for_status()
+    return response.content
+
+
 def call_tts(text: str, voice_id: str = TTS_VOICE_ID) -> bytes:
     if TTS_PROVIDER == "polly":
         return call_tts_polly(text)
     if TTS_PROVIDER == "http":
         return call_tts_http(text, voice_id)
-    raise ValueError(f"Unsupported TTS_PROVIDER={TTS_PROVIDER!r}; use 'http' or 'polly'")
+    if TTS_PROVIDER == "voxcpm":
+        return call_tts_voxcpm(text)
+    raise ValueError(
+        f"Unsupported TTS_PROVIDER={TTS_PROVIDER!r}; use 'http', 'polly', or 'voxcpm'"
+    )
 
 
 def load_final_audio_shard(title: str, block_index: int) -> bytes | None:
