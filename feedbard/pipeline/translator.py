@@ -82,7 +82,7 @@ def _translate_block(index: int, block, target_language: str, title: str) -> Non
 
 
 def translate_blocks(
-    document, title: str, target_language: str = TARGET_LANGUAGE, max_workers: int = 8
+    document, title: str, target_language: str = TARGET_LANGUAGE, max_workers: int = 1
 ):
     # A block that already carries translated text got it from
     # `narration.attach_descriptions`, which works in the narration language:

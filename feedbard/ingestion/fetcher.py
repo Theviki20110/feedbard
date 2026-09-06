@@ -40,6 +40,11 @@ from feedbard.paths import raw_html_path
 USER_AGENT = "Mozilla/5.0 (compatible; feedbard/1.0; +https://github.com/)"
 TIMEOUT = 30
 
+# huggingface.co rate-limits unauthenticated requests hard enough to trip the
+# 429 retry loop below; an HF_TOKEN raises that ceiling.
+HF_TOKEN = os.getenv("HF_TOKEN", "")
+HF_HOSTS = ("huggingface.co",)
+
 # Hosts served by Substack itself. Publications on a custom domain are not
 # matched by name, so they are detected from the feed's <generator> instead.
 SUBSTACK_HOSTS = (".substack.com",)
@@ -94,10 +99,18 @@ class Article:
     cover_image: str = ""
 
 
+def _headers(url: str) -> dict[str, str]:
+    headers = {"User-Agent": USER_AGENT}
+    host = urlparse(url).hostname or ""
+    if HF_TOKEN and host.endswith(HF_HOSTS):
+        headers["Authorization"] = f"Bearer {HF_TOKEN}"
+    return headers
+
+
 def _get(url: str) -> requests.Response:
     with _host_semaphore(url):
         for attempt in range(MAX_429_RETRIES + 1):
-            r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT)
+            r = requests.get(url, headers=_headers(url), timeout=TIMEOUT)
             if r.status_code != 429 or attempt == MAX_429_RETRIES:
                 r.raise_for_status()
                 return r

@@ -7,13 +7,19 @@ from feedbard.pipeline.orchestrator import process_feeds
 
 load_dotenv()
 
+# One run processes at most this many new posts per feed, so a feed that
+# dumps a dozen new entries at once doesn't turn a single cron tick into an
+# hours-long LLM/TTS backlog. Posts left over are still new next run, since
+# only the ones actually processed get marked seen.
+MAX_POSTS_PER_RUN = 5
+
 
 def check_and_run() -> None:
     init_db()
     for feed_url in read_feed_urls():
         entries = get_post_entries_v2(feed_url)
         new_urls = set(filter_new_posts(feed_url, [e["url"] for e in entries]))
-        new_entries = [e for e in entries if e["url"] in new_urls]
+        new_entries = [e for e in entries if e["url"] in new_urls][:MAX_POSTS_PER_RUN]
 
         if not new_entries:
             logger.info("[%s] nessun nuovo post", feed_url)

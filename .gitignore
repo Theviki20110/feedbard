@@ -223,3 +223,6 @@ __marimo__/
 ignore_this_folder
 .vscode
 terminal_to_debug.txt
+
+# macOS
+.DS_Store

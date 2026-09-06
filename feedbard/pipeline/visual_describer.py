@@ -113,7 +113,12 @@ def _fetch_image(vid: str, url: str) -> tuple[bytes, str]:
     media_type = resp.headers.get("Content-Type", "").split(";")[0].strip()
     if not media_type.startswith("image/"):
         media_type = mimetypes.guess_type(url)[0] or "image/jpeg"
-    image_bytes, media_type = _downscale_if_needed(resp.content, media_type)
+    # SVG is vector, not raster: PIL can't open it and it has no pixel
+    # dimensions to downscale, so skip straight past that path.
+    if media_type == "image/svg+xml":
+        image_bytes = resp.content
+    else:
+        image_bytes, media_type = _downscale_if_needed(resp.content, media_type)
 
     FIGURES_DIR.mkdir(parents=True, exist_ok=True)
     ext = mimetypes.guess_extension(media_type) or ".jpg"
@@ -122,10 +127,17 @@ def _fetch_image(vid: str, url: str) -> tuple[bytes, str]:
 
 
 def describe_visual(v: Visual, language: str = TARGET_LANGUAGE) -> None:
+    image_bytes, media_type = _fetch_image(v.vid, v.fetch_url)
+    if media_type == "image/svg+xml":
+        # Badges (shields.io, arXiv, build status) are the near-universal case
+        # here, and no vision model can read vector content anyway.
+        v.klass, v.description = "decorativo", None
+        save_visual_shard(v.vid, v.klass, v.description, language)
+        return
+
     prompt = Template(VISUAL_PROMPT_PATH.read_text(encoding="utf-8")).render(
         HINT=v.hint, ALT=v.alt, CAPTION=v.caption, TARGET_LANGUAGE=language
     )
-    image_bytes, media_type = _fetch_image(v.vid, v.fetch_url)
     raw, _ = generate_vision_response(prompt, image_bytes, media_type)
     match = _JSON_RE.search(raw)
     parsed = json.loads(match.group(0) if match else raw)

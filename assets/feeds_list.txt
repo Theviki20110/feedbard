@@ -1,6 +1,0 @@
-# One feed URL per line. Blank lines and lines starting with # are ignored.
-#
-# This file ships empty on purpose: only add feeds you are allowed to process
-# this way. See the "Intended use" section of the README.
-#
-# https://example.com/feed
