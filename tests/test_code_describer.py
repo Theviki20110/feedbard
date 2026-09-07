@@ -1,3 +1,5 @@
+import pytest
+
 from feedbard.ingestion.html_parser import Block, Document, Kind
 from feedbard.pipeline import code_describer
 from feedbard.pipeline.code_describer import code_id, describe_code_blocks
@@ -45,7 +47,7 @@ def test_a_second_run_resumes_from_the_shard(monkeypatch, tmp_path):
     assert len(calls) == 1
 
 
-def test_a_refusal_drops_the_block_rather_than_reading_it_raw(monkeypatch, tmp_path):
+def test_a_declined_block_is_dropped_rather_than_read_raw(monkeypatch, tmp_path):
     # Unlike a table's numbers, raw code carries nothing a listener can use:
     # a description that failed should leave the block silent, not fall back
     # to reading the source characters aloud.
@@ -54,7 +56,7 @@ def test_a_refusal_drops_the_block_rather_than_reading_it_raw(monkeypatch, tmp_p
     monkeypatch.setattr(
         code_describer,
         "generate_response",
-        lambda prompt: ("Mi dispiace, non posso aiutarti con questa richiesta.", 0.0),
+        lambda prompt: ("", 0.0),
     )
 
     doc = _doc(CODE)
@@ -100,3 +102,56 @@ def test_blocks_without_text_are_skipped(monkeypatch):
     doc = _doc("")
     describe_code_blocks(doc)
     assert doc.blocks[0].description is None
+
+
+# --- the model handing the block back --------------------------------------
+
+FENCE = '```python\nimport numpy as np\nmodel = load_model("north-mini")\n```'
+TRANSCRIPT = "$ ollama run qwen3.6:35b\npulling manifest\npulling 8a1b2c3d... 100%  4.7 GB"
+
+
+@pytest.mark.parametrize("source", [FENCE, TRANSCRIPT, CODE])
+def test_a_reply_that_reproduces_a_source_line_is_an_echo(source):
+    assert code_describer.is_echo(source, source)
+    assert code_describer.is_echo(source, f"Ecco il blocco:\n{source}")
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "Il blocco carica il modello north-mini e stampa il testo generato.",
+        "Scarica il modello con ollama e mostra l'avanzamento del download.",
+        "Definisce una funzione che somma i due argomenti.",
+        # Naming an identifier is not echoing it: a description is allowed to
+        # say what the thing is called.
+        "Il blocco importa numpy e usa load_model per caricare il modello.",
+    ],
+)
+def test_a_real_description_is_not_an_echo(description):
+    assert not code_describer.is_echo(FENCE, description)
+    assert not code_describer.is_echo(CODE, description)
+
+
+def test_an_echo_is_asked_again_and_the_second_reply_is_kept(monkeypatch, tmp_path):
+    monkeypatch.setattr(code_describer, "CODE_SHARDS_DIR", tmp_path)
+    monkeypatch.setattr(code_describer, "code_shard_path", lambda cid: tmp_path / f"{cid}.json")
+    replies = iter([(FENCE, 0.0), ("Il blocco carica il modello e stampa.", 0.0)])
+    monkeypatch.setattr(code_describer, "generate_response", lambda prompt: next(replies))
+
+    doc = _doc(FENCE)
+    describe_code_blocks(doc)
+    assert doc.blocks[0].description == "Il blocco carica il modello e stampa."
+
+
+def test_a_block_that_is_only_ever_echoed_is_dropped_and_not_cached(monkeypatch, tmp_path):
+    # Neither empty nor a refusal, so every other check passes: without this
+    # guard the source reached the speech engine as if it were prose.
+    monkeypatch.setattr(code_describer, "CODE_SHARDS_DIR", tmp_path)
+    monkeypatch.setattr(code_describer, "code_shard_path", lambda cid: tmp_path / f"{cid}.json")
+    monkeypatch.setattr(code_describer, "generate_response", lambda prompt: (FENCE, 0.0))
+
+    doc = _doc(FENCE)
+    describe_code_blocks(doc)
+
+    assert doc.blocks[0].description is None
+    assert list(tmp_path.glob("*.json")) == [], "an echo must never reach the shard cache"

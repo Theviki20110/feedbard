@@ -31,10 +31,10 @@ def _check_and_run_feed(feed_url: str) -> None:
     new_entries = [e for e in entries if e["url"] in new_urls][:MAX_POSTS_PER_RUN]
 
     if not new_entries:
-        logger.info("[%s] nessun nuovo post", feed_url)
+        logger.info("[%s] no new posts", feed_url)
         return
 
-    logger.info("[%s] %d nuovo/i post trovato/i, avvio pipeline", feed_url, len(new_entries))
+    logger.info("[%s] %d new post(s), starting the pipeline", feed_url, len(new_entries))
     feeds = get_feeds(new_entries)
     # get_feeds marks a post whose fetch failed with None; it never reaches
     # the pipeline and is left unseen, so it is retried next run.

@@ -38,12 +38,14 @@ app.check_and_run()
   ├─ pipeline/orchestrator.process_feeds()
   │    for each item:
   │      ├─ ingestion/html_parser.extract()          HTML -> typed blocks + visuals
+  │      ├─ pipeline/triage.triage()                 LLM -> where the article ends,
+  │      │                                           what carries nothing, what moves
   │      ├─ pipeline/visual_describer.describe_visuals()  LLM vision -> classify/describe images
   │      ├─ pipeline/table_describer.describe_tables()    LLM -> a table read as prose
   │      ├─ pipeline/code_describer.describe_code_blocks() LLM -> code/diagram read as prose
   │      ├─ pipeline/narration.attach_descriptions()      descriptions -> the block stream
   │      ├─ pipeline/translator.translate_blocks()        LLM -> translated blocks
-  │      ├─ pipeline/sanitizer.sanitize_blocks()          LLM + scrub -> speakable text
+  │      ├─ pipeline/sanitizer.sanitize_blocks()          allowlist + LLM -> speakable text
   │      ├─ pipeline/audio_renderer.generate_audio_from_blocks()  TTS -> episode MP3
   │      └─ pipeline/publisher.publish()                  -> Audiobookshelf library
   └─ feeds/store.mark_post_seen()       record processed URLs
@@ -100,7 +102,8 @@ data/
     audio/      synthesized audio, per block    │ rebuild but loses nothing
     visual/     image class + description       │
     table/      spoken description, per table    │
-    code/       spoken description, per code block ─┘
+    code/       spoken description, per code block│
+    triage/     the editorial verdict, per article┘
 ```
 
 Episodes, covers, and the text/speech/audio shards are all named from the
@@ -171,15 +174,16 @@ read the environment of a running container.
 ## Narration language
 
 `TARGET_LANGUAGE` (default `Italian`) sets the language articles are
-translated into and narrated in. It reaches the LLM prompts directly, and the
-deterministic scrub in `pipeline/sanitizer.py` reads its spoken forms for
-symbols (`σ` -> "sigma", `<=` -> "minore o uguale a") from
-`assets/lexicons/<language>.json`.
+translated into and narrated in, and it is the only place the language is
+written. It accepts whatever an operator would naturally type -- an English
+language name (`Italian`), a bare code (`it`), or a full tag (`pt-BR`) --
+and `feedbard/language.py` derives the rest:
 
-`TARGET_LANGUAGE` does not, by itself, change what the TTS/ASR stage speaks:
-a language name like `Italian` isn't the language code those services expect,
-and Polly wants a different code format (`it-IT`) than the HTTP TTS server
-and the ASR QA step do (`it`). Point them at the same language explicitly:
+| Derived | Used by | Example |
+| --- | --- | --- |
+| name | every LLM prompt | `Italian` |
+| short code | HTTP TTS server, ASR QA round-trip | `it` |
+| BCP-47 tag | Polly | `it-IT` |
 
 - `TTS_VOICE_ID` / `TTS_LANGUAGE_CODE` -- voice and short code for
   `TTS_PROVIDER=http` (also used by the ASR round-trip check).
@@ -192,12 +196,96 @@ and the ASR QA step do (`it`). Point them at the same language explicitly:
   ignored unless it names a preset already registered on the server, so
   without `VOXCPM_REF_AUDIO` every call invents a different speaker.
 
-Supporting a new language means adding one JSON file to `assets/lexicons/`
--- `symbols` for single glyphs, `sequences` for ordered multi-character
-replacements, longest first -- and pointing `TARGET_LANGUAGE` plus the four
-variables above at it. A language with no lexicon file still runs: the scrub
-logs a warning and falls back to the English spoken forms, so a symbol is
-narrated in the wrong language rather than silently dropped from a claim.
+`TTS_LANGUAGE_CODE` and `POLLY_LANGUAGE_CODE` remain as overrides for what
+derivation cannot know -- a regional variant the tag does not carry, or a
+provider that spells a code its own way -- but they no longer have to be kept
+in sync by hand, which is what used to let a half-edited `.env` narrate one
+language with another's codes.
+
+**Voices are not derived.** Nothing maps "which language" to "which voice", so
+`TTS_VOICE_ID` / `POLLY_VOICE_ID` stay explicit. Their defaults are Italian; if
+`TARGET_LANGUAGE` names another language and the voice is still the default,
+the run logs a warning rather than reading the right words in the wrong accent.
+
+**There is nothing else to configure.** No word list, no symbol table, no
+per-language file. Adding a language means setting `TARGET_LANGUAGE` and
+picking a voice. The prompts stay in English because they are instructions to
+a model, not text anyone hears.
+
+That is a deliberate constraint, and it is what the rest of this section is
+about: every decision that depends on a language is either derived from the
+Unicode database or made by the model, never written down in the code.
+
+### What is speakable, and how it is decided
+
+`pipeline/speakable.py` answers this by exclusion. A passage made only of
+letters, combining marks, digits, spaces and punctuation is already speech and
+is sent to the voice untouched. Anything else -- a symbol, a URL, a fragment
+of code, an emoji, a rule drawn out of box characters -- is notation, and only
+the model can say what it should sound like *here*.
+
+Nothing in that rule names a language. Letters, marks and digits come from
+Unicode general categories. The punctuation set is derived rather than listed:
+a character counts as punctuation if the Unicode database says its name is one
+of thirteen concepts (`FULL STOP`, `COMMA`, `QUESTION MARK`, `PARENTHESIS`,
+`DANDA`, ...), so `,` `、` `،` all arrive as "comma" and every script's
+version comes along without anyone adding it. Listing the characters instead
+would have quietly meant "Latin".
+
+Three things pass the character test and still are not prose, so they are
+checked separately:
+
+- **A lone letter from another script.** `σ` in Italian prose is a variable
+  and has to be spelled out; the same `σ` in Greek prose is a word. What
+  matters is that it stands alone *and* is foreign to this passage, never that
+  it is Greek — a rule based on script alone would have flagged every Japanese
+  article, since Japanese mixes three scripts in a sentence.
+- **A run of two or more dashes.** `--model` is a flag, `—` is punctuation.
+- **A name followed by a dotted version number.** `DeepSeek 4.5` must be read
+  as a version; read as a decimal it is a different number, and where the dot
+  separates thousands, a very different one.
+
+On a corpus of real translated blocks this sends about one block in five to
+the model, so the common case costs nothing.
+
+### What happens to the rest
+
+`pipeline/sanitizer.py` checks, asks, asks again, then deletes:
+
+1. Already speakable -> returned as-is, no call.
+2. One call, told what tripped the check. If the answer passes, done.
+3. One more call, told what the previous answer left behind. If it passes, done.
+4. `strip_unspeakable` drops what is left -- whole tokens, not characters, so
+   a URL leaves a gap rather than a run of letters. Reached only after the
+   model has failed twice, and logged as the failure it is.
+
+Tables, code blocks and figures never take this path: they are described as
+prose by their own stages before they ever reach it. Those descriptions still
+go through the sanitizer, since a described formula arrives full of symbols.
+
+### Declining
+
+Every prompt in `assets/` tells the model to answer with **nothing** rather
+than explain why it will not do the task. A sentence about the task is
+indistinguishable from article prose downstream: it gets saved to a shard and
+read aloud as if the author had written it. An empty answer is a value the
+pipeline can act on -- the table falls back to reading its rows, the code block
+is dropped, the paragraph is asked for once more and then reported as missing.
+
+### Editorial judgements
+
+`pipeline/triage.py` makes one call per article, cached in `shards/triage/`,
+and decides three things the code used to decide with English regexes: where
+the closing material starts (bibliography, author bio, further reading), which
+blocks carry nothing a listener needs (subscription prompts, shop links,
+source-only captions), and which paragraph refers back to the figure above it
+and should be narrated before it.
+
+It returns indices, never text, so it cannot rewrite the article. Nothing is
+removed from the block list -- a dropped block is emptied in place, because
+every per-block shard on disk is keyed by index. And it fails open: any error,
+bad JSON, or out-of-range index leaves the article exactly as parsed, because
+narrating a bibliography is a much smaller problem than losing half a post.
 
 ## What a listener hears that they cannot see
 
@@ -205,9 +293,9 @@ Four kinds of content in an article are not prose, and each would be a silent
 gap in the episode if it were simply skipped:
 
 - **Figures.** The vision pass (`assets/visual_prompt.txt`) classifies each
-  image as `decorativo`, `illustrativo`, or `essenziale` and, for the last
+  image as `decorative`, `illustrative`, or `essential` and, for the last
   two, writes a short paragraph saying what it shows -- the takeaway of a
-  chart, a formula read out in words. `decorativo` covers banners, logos, and
+  chart, a formula read out in words. `decorative` covers banners, logos, and
   header photos: those stay silent, because narrating them interrupts the
   prose without adding anything. SVG images (shields.io badges, arXiv/build
   status) are classified `decorativo` without a vision call: they are vector,
@@ -238,26 +326,20 @@ figure or table twice.
 ## Links
 
 A read-aloud URL is a minute of spelled-out path segments a listener cannot
-use, so no link reaches the speech engine. Removal happens in three steps,
-each covering the one before it:
+use, so no link reaches the speech engine.
 
-1. **Before the LLM pass**, every URL is replaced by a `⟪link: host⟫` marker.
-   The model never sees an address, so it cannot leave one in, and the host
-   tells it what was being pointed at -- "available on GitHub" instead of a
-   sentence that trails off.
-2. **The LLM pass** consumes the marker as part of its normal rewrite,
-   phrasing the sentence around the named source. No extra call, no extra cost.
-3. **The scrub** deletes any marker or raw URL that survived and turns the
-   connector it stranded into a full stop.
+Nothing special is needed to catch one. A URL contains characters that are not
+letters, digits, spaces or punctuation, so it fails the allowlist like any
+other notation, and the block goes to the model with the rest of its context.
+The model rewrites the sentence around the address -- "the code is available
+on GitHub" rather than a sentence that trails off -- because the domain is
+still there for it to read.
 
-Step 3 is deterministic, so it cannot mend prose: `"cloned the scripts from,
-we can run"` is grammatical nonsense in any language a regex could patch. When
-a block reaches it having skipped or failed the LLM pass *and* it contained a
-link, one small repair call fixes the connective tissue
-(`assets/repair_prompt.txt`). That call is accepted only if the result
-introduces no link, is not a refusal, and stays within 15% of the original
-length -- otherwise the unrepaired text is kept.
-The repair pass can improve a block, never replace it.
+If the model hands back an address anyway, the answer fails the same check
+that sent it, and it is asked once more. If that fails too, the last-resort
+scrub drops the whole token rather than the offending character: deleting only
+the slashes out of `https://github.com/rasbt/evals` would leave
+`httpsgithubcomrasbtevals` for the voice to attempt.
 
 ## Running
 

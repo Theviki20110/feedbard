@@ -12,13 +12,13 @@ The hint is only a starting guess. You see the actual image: judge it on what it
 
 Classify the image into exactly one `klass`:
 
-* `decorativo`: banner, header photo, stock photo, logo, divider, or any image that carries no information relevant to the article's content. Skipped entirely in the audio.
-* `illustrativo`: adds color or a supporting visual but the article's text already conveys the substance (e.g. a portrait of a person already named in the text, a generic stock illustration of a concept already explained).
-* `essenziale`: the image itself carries information not otherwise stated in the text — a chart, a diagram, a screenshot with meaningful content, a formula, a table rendered as an image. Without a description the listener loses information.
+* `decorative`: banner, header photo, stock photo, logo, divider, or any image that carries no information relevant to the article's content. Skipped entirely in the audio.
+* `illustrative`: adds color or a supporting visual but the article's text already conveys the substance (e.g. a portrait of a person already named in the text, a generic stock illustration of a concept already explained).
+* `essential`: the image itself carries information not otherwise stated in the text — a chart, a diagram, a screenshot with meaningful content, a formula, a table rendered as an image. Without a description the listener loses information.
 
 ## Description
 
-If `klass` is `decorativo`, leave `description` empty.
+If `klass` is `decorative`, leave `description` empty.
 
 Otherwise write a single short paragraph in `{{TARGET_LANGUAGE}}`, meant to be read aloud right after the sentence that introduces the image. It must:
 
@@ -32,6 +32,22 @@ Otherwise write a single short paragraph in `{{TARGET_LANGUAGE}}`, meant to be r
 
 Return exactly one JSON object, nothing else:
 
-{"klass": "decorativo|illustrativo|essenziale", "description": "..."}
+{"klass": "decorative|illustrative|essential", "description": "..."}
 
 No text before or after the JSON. No markdown code fences.
+
+# Your output is spoken, not printed
+
+What you write is sent to a speech synthesizer and read aloud verbatim. It must contain ONLY letters, digits, spaces, line breaks, and ordinary sentence punctuation (full stop, comma, semicolon, colon, question mark, exclamation mark, apostrophe, quotation marks, parentheses, hyphen, dash, ellipsis).
+
+Never emit: mathematical or Greek symbols, operators, arrows, currency or degree signs, `#`, `*`, `/`, `\`, `_`, `%`, `&`, `@`, `|`, backticks, `~`, `^`, `=`, `<`, `>`, square or curly brackets, Markdown of any kind, code, URLs, file paths, emoji, box-drawing or block characters, or escape sequences such as `\n`.
+
+Where the source contains one of these and it matters, say it in words in the target language instead: spell a symbol out with its conventional spoken name, name a file rather than reading its path, describe a drawing rather than reproducing it. Where it carries nothing a listener can use, phrase the sentence so it is not needed.
+
+# If you cannot do this
+
+Return an empty response. Nothing else.
+
+Do not explain, do not apologize, do not describe the problem, do not offer an alternative, do not ask for input. Your answer is fed straight into the pipeline that produces the audio, so any sentence about the task is narrated to the listener as if the author had written it. An empty answer is understood and handled; a sentence about the task is not.
+
+This applies to every reason you might have: the input looks empty, it looks like part of a copyrighted work, it looks like something you would rather not process. Return nothing.

@@ -2,11 +2,11 @@ from concurrent.futures import ThreadPoolExecutor
 
 from jinja2 import Template
 
+from feedbard.language import TARGET_LANGUAGE
 from feedbard.llm_client import generate_response
 from feedbard.logger import logger
 from feedbard.paths import ASSETS_DIR, TEXT_SHARDS_DIR, text_shard_path
-from feedbard.pipeline.lexicon import TARGET_LANGUAGE
-from feedbard.pipeline.sanitizer import ModelRefusedError, check_usable, is_effectively_empty
+from feedbard.pipeline.sanitizer import is_effectively_empty
 
 TRANSLATOR_PROMPT_PATH = ASSETS_DIR / "translator_prompt.txt"
 
@@ -14,11 +14,12 @@ TRANSLATOR_PROMPT_PATH = ASSETS_DIR / "translator_prompt.txt"
 # the process is interrupted mid-article, restarting skips every block whose
 # shard is already on disk instead of re-billing the model for it.
 
-# A refusal is sampled, not deterministic: the same prompt run again often
-# just answers normally. Bounded so a block that refuses for a real reason
-# (unlike sanitize_chunk, translate has no mechanical fallback to drop to)
-# still surfaces as ModelRefusedError instead of retrying forever.
-MAX_REFUSAL_RETRIES = 2
+# The prompt tells the model to answer with nothing rather than explain why it
+# will not translate, so an empty answer is a decline, not a crash. Declining
+# is sampled rather than deterministic -- the same prompt run again usually
+# just answers -- and unlike the sanitizer this stage has no mechanical
+# fallback to drop to, so it is worth asking again before losing a paragraph.
+MAX_EMPTY_RETRIES = 2
 
 
 def load_text_shard(title: str, index: int) -> str | None:
@@ -44,7 +45,7 @@ def translate_chunk(chunk: str, target_language: str, index: int) -> str:
         SOURCE_TEXT=chunk, TARGET_LANGUAGE=target_language
     )
 
-    for attempt in range(MAX_REFUSAL_RETRIES + 1):
+    for attempt in range(MAX_EMPTY_RETRIES + 1):
         translated_chunk, elapsed_time = generate_response(prompt)
         logger.info(
             "Translation chunk %d to %s completed in %.2f seconds",
@@ -52,21 +53,25 @@ def translate_chunk(chunk: str, target_language: str, index: int) -> str:
             target_language,
             elapsed_time,
         )
-        try:
-            # Commentary about the task reads exactly like article prose
-            # downstream, so it has to be rejected here rather than
-            # discovered in the audio.
-            check_usable(translated_chunk, "translate", index, source=chunk)
-        except ModelRefusedError:
-            if attempt == MAX_REFUSAL_RETRIES:
-                raise
-            logger.warning(
-                "translate block %d: refused on attempt %d/%d, retrying",
+        if is_effectively_empty(translated_chunk):
+            if attempt < MAX_EMPTY_RETRIES:
+                logger.warning(
+                    "translate block %d: model declined on attempt %d/%d, asking again",
+                    index,
+                    attempt + 1,
+                    MAX_EMPTY_RETRIES + 1,
+                )
+                continue
+            # Loud, because this is a paragraph of the article going missing
+            # from the episode and nothing downstream can tell that it did.
+            logger.error(
+                "translate block %d: model declined %d time(s); the block is dropped from the "
+                "episode. Source: %r",
                 index,
-                attempt + 1,
-                MAX_REFUSAL_RETRIES + 1,
+                MAX_EMPTY_RETRIES + 1,
+                chunk[:200],
             )
-            continue
+            return ""
 
         # The ⟪⟫ markers around inline code (added by the HTML parser) are
         # left in place on purpose: they tell the sanitizer stage which spans

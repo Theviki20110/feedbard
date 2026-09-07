@@ -7,6 +7,7 @@ from feedbard.pipeline.publisher import publish
 from feedbard.pipeline.sanitizer import sanitize_blocks
 from feedbard.pipeline.table_describer import describe_tables
 from feedbard.pipeline.translator import translate_blocks
+from feedbard.pipeline.triage import triage
 from feedbard.pipeline.visual_describer import describe_visuals
 
 
@@ -30,8 +31,6 @@ def _log_extraction(doc: Document, title: str) -> None:
             title,
             ", ".join(f"{sel}x{n}" for sel, n in sorted(doc.dropped.items())),
         )
-    if doc.truncated_at:
-        logger.info("[%s] extract: stopped at tail heading %r", title, doc.truncated_at)
 
 
 def process_item(item: dict) -> str:
@@ -39,6 +38,11 @@ def process_item(item: dict) -> str:
     logger.info("[%s] extract: parsing HTML", title)
     doc = extract(item["text"])
     _log_extraction(doc, title)
+
+    # Before anything is billed per block: what triage drops is never
+    # described, translated, or synthesized.
+    logger.info("[%s] triage", title)
+    triage(doc, title)
 
     logger.info("[%s] describe_visuals", title)
     describe_visuals(doc)

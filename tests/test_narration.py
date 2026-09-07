@@ -19,7 +19,7 @@ def _visual(vid, klass, description):
 def test_essential_visual_becomes_narratable():
     doc = _doc(
         [Block(Kind.PROSE, text="prosa"), Block(Kind.VISUAL, vid="aaaaaaaaaa")],
-        [_visual("aaaaaaaaaa", "essenziale", "Il grafico mostra una curva che sale.")],
+        [_visual("aaaaaaaaaa", "essential", "Il grafico mostra una curva che sale.")],
     )
     assert attach_descriptions(doc) == 1
     assert doc.blocks[1].translated_text == "Il grafico mostra una curva che sale."
@@ -28,7 +28,7 @@ def test_essential_visual_becomes_narratable():
 def test_illustrative_visual_is_narrated_too():
     doc = _doc(
         [Block(Kind.VISUAL, vid="bbbbbbbbbb")],
-        [_visual("bbbbbbbbbb", "illustrativo", "Un ritratto dell'autore.")],
+        [_visual("bbbbbbbbbb", "illustrative", "Un ritratto dell'autore.")],
     )
     assert attach_descriptions(doc) == 1
 
@@ -37,7 +37,7 @@ def test_decorative_visual_stays_silent():
     # A banner narrated is an interruption, not information.
     doc = _doc(
         [Block(Kind.VISUAL, vid="cccccccccc")],
-        [_visual("cccccccccc", "decorativo", None)],
+        [_visual("cccccccccc", "decorative", None)],
     )
     assert attach_descriptions(doc) == 0
     assert doc.blocks[0].translated_text is None
@@ -46,7 +46,7 @@ def test_decorative_visual_stays_silent():
 def test_visual_whose_description_failed_stays_silent():
     doc = _doc(
         [Block(Kind.VISUAL, vid="dddddddddd")],
-        [_visual("dddddddddd", "essenziale", None)],
+        [_visual("dddddddddd", "essential", None)],
     )
     assert attach_descriptions(doc) == 0
 
@@ -93,7 +93,7 @@ def test_block_count_is_unchanged():
         Block(Kind.VISUAL, vid="eeeeeeeeee"),
         Block(Kind.TABLE, rows=[["a", "b"]], description="una tabella"),
     ]
-    doc = _doc(blocks, [_visual("eeeeeeeeee", "essenziale", "una figura")])
+    doc = _doc(blocks, [_visual("eeeeeeeeee", "essential", "una figura")])
     attach_descriptions(doc)
     assert len(doc.blocks) == 3
 
@@ -116,7 +116,7 @@ def test_extracted_figure_and_table_reach_the_audio_path():
     table_block = next(b for b in doc.blocks if b.kind is Kind.TABLE)
     assert visual_block.text == "" and table_block.text == ""
 
-    doc.visuals[visual_block.vid].klass = "essenziale"
+    doc.visuals[visual_block.vid].klass = "essential"
     doc.visuals[visual_block.vid].description = "La curva sale fino a quaranta."
     table_block.description = "Il modello da sette miliardi segna quarantuno virgola due."
 
